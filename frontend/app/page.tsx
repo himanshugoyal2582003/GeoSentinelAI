@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowUpRight, CalendarDays, Crosshair, FileText, MapPin, Upload, Waves } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, CalendarDays, Crosshair, FileText, MapPin, Upload, Waves, BrainCircuit } from "lucide-react";
 import type { Map as LeafletMap } from "leaflet";
 import "leaflet/dist/leaflet.css";
 
@@ -30,6 +30,8 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [liveScanning, setLiveScanning] = useState(false);
+  const [training, setTraining] = useState(false);
+  const [trainingMessage, setTrainingMessage] = useState("");
   const [nextScanAt, setNextScanAt] = useState<number | null>(null);
   const [error, setError] = useState("");
 
@@ -56,6 +58,7 @@ export default function Home() {
   }, [liveScanning]);
 
   const maxArea = useMemo(() => Math.max(...(data?.timeline.map((item) => item.areaSqm) || [1])), [data]);
+  const chartHeight = (area: number) => area ? Math.max(18, Math.sqrt(area / maxArea) * 150) : 18;
   async function handleUpload(event: React.ChangeEvent<HTMLInputElement>) {
     const files = event.target.files;
     if (!files || files.length < 2) return;
@@ -76,6 +79,27 @@ export default function Home() {
       const value = await response.json() as Dataset; applyLiveResult(value);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Live scan failed"); }
     finally { setLiveScanning(false); }
+  }
+  async function trainCnn() {
+    setTraining(true); setTrainingMessage("Starting CNN training...");
+    try {
+      const response = await fetch(`${API}/api/train`, { method: "POST" });
+      if (!response.ok) throw new Error((await response.json()).detail || "CNN training could not start. Enable TRAINING_ENABLED on the backend.");
+      let state = await response.json() as { status: string; message: string };
+      setTrainingMessage(state.message);
+      while (state.status === "running") {
+        await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        const statusResponse = await fetch(`${API}/api/train`);
+        if (!statusResponse.ok) throw new Error("Could not read CNN training status");
+        state = await statusResponse.json() as { status: string; message: string };
+        setTrainingMessage(state.message);
+      }
+      if (state.status === "failed") throw new Error(state.message);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "CNN training failed");
+    } finally {
+      setTraining(false);
+    }
   }
   function downloadReport() {
     if (!selected || !data) return;
@@ -98,13 +122,14 @@ export default function Home() {
     <main>
       <header className="topbar">
         <div className="brand"><div className="brand-mark"><Crosshair size={20} /></div><div><strong>GEOSENTINEL</strong><span>AI MONITORING COMMAND CENTER</span></div></div>
-        <div className="top-actions"><span className="live-dot" /> SYSTEM OPERATIONAL <button className="live-button" onClick={runLiveScan}><Waves size={15} /> {liveScanning ? "SCANNING..." : "LIVE SATELLITE SCAN"}</button><label className="upload-button"><Upload size={15} /> {uploading ? "PROCESSING..." : "UPLOAD PAIR"}<input type="file" accept="image/*" multiple onChange={handleUpload} /></label></div>
+        <div className="top-actions"><span className="live-dot" /> SYSTEM OPERATIONAL <button className="live-button" onClick={runLiveScan}><Waves size={15} /> {liveScanning ? "SCANNING..." : "LIVE SATELLITE SCAN"}</button><button className="live-button" onClick={trainCnn} disabled={training}><BrainCircuit size={15} /> {training ? "TRAINING..." : "TRAIN CNN"}</button><label className="upload-button"><Upload size={15} /> {uploading ? "PROCESSING..." : "UPLOAD PAIR"}<input type="file" accept="image/*" multiple onChange={handleUpload} /></label></div>
       </header>
       <section className="hero">
         <div><p className="eyebrow">THE CHANGE SENTINEL / T8.1</p><h1>From satellite pixels<br /><em>to actionable intelligence.</em></h1><p className="hero-copy">Detecting suspicious land-use change before it disappears into the landscape.</p></div>
         <div className="scan-status"><Waves size={16} /><span>MONITORING WINDOW</span><strong>{data?.historicalDate} <b>→</b> {data?.recentDate}</strong></div>
       </section>
       {error && <div className="error"><AlertTriangle size={17} /> {error}<button className="retry-button" onClick={runLiveScan}>RETRY LIVE SCAN</button></div>}
+      {trainingMessage && <div className="cache-note"><BrainCircuit size={16} /> {trainingMessage}</div>}
       <section className="controls"><div><span className="control-label">REGION</span><strong><MapPin size={15} /> {data?.region}</strong></div><div><span className="control-label">SENSOR</span><strong>Sentinel-2 / 10m</strong></div><div><span className="control-label">DETECTION MODE</span><strong>ChangeCNN + differencing</strong></div><div><span className="control-label">AUTO MONITORING</span><strong>Every 10 minutes</strong><small>{nextScanAt ? `Next scan ${new Date(nextScanAt).toLocaleTimeString()}` : "Starting..."}</small></div><div className="demo-badge">{data?.source ? "LIVE SATELLITE" : "DEMO DATASET"}</div></section>
       {data?.source && <section className="satellite-compare"><div className="satellite-head"><div><span className="eyebrow">LIVE EVIDENCE / STATIC MONITORING LOCATION</span><h2>Satellite comparison</h2><p>{data.source.provider} · {data.source.sceneCount || 0} scenes · approximately 5-day Sentinel-2 revisit · BBOX {data.source.bbox.join(", ")}</p></div><span className="live-tag">{data.source.stale ? "CACHED REAL FEED" : "LIVE FEED"}</span></div><div className="satellite-images"><figure><img src={`${API}${data.source.historicalImage}`} alt="Historical Sentinel-2 scene" /><figcaption>HISTORICAL / {data.historicalDate}</figcaption></figure><div className="compare-arrow">→</div><figure><img src={`${API}${data.source.recentImage}`} alt="Recent Sentinel-2 scene" /><figcaption>RECENT / {data.recentDate}</figcaption></figure></div>{data.source.stale && <p className="cache-note">{data.source.note}</p>}</section>}
       <section className="kpis">
@@ -117,7 +142,7 @@ export default function Home() {
         <div className="panel map-panel"><div className="panel-head"><div><span className="eyebrow">SPATIAL OVERVIEW</span><h2>Live change map</h2></div><span className="map-legend"><i className="legend-dot high" /> HIGH RISK <i className="legend-dot medium" /> REVIEW</span></div><LiveMap data={data} onSelect={setSelected} /></div>
         <div className="panel findings-panel"><div className="panel-head"><div><span className="eyebrow">DETECTION QUEUE</span><h2>Flagged regions <small>{data?.findings.length}</small></h2></div><button className="text-button">VIEW ALL <ArrowUpRight size={14} /></button></div><div className="findings-list">{data?.findings.map((finding, index) => <button className={`finding ${selected?.id === finding.id ? "selected" : ""}`} key={finding.id} onClick={() => setSelected(finding)}><span className={`finding-index ${finding.severity}`}>0{index + 1}</span><span className="finding-main"><strong>{finding.areaName || finding.label}</strong><small>{finding.changeType} · {finding.coordinates.join(", ")}</small></span><span className="finding-area">{(finding.areaSqm / 10000).toFixed(2)} ha</span><ArrowUpRight size={16} /></button>)}</div></div>
       </section>
-      <section className="lower-grid"><div className="panel timeline-panel"><div className="panel-head"><div><span className="eyebrow">TEMPORAL ANALYSIS</span><h2>Expansion trajectory</h2></div><span className="unit">AREA / M²</span></div><p className="timeline-note">{data?.timelineNote || "Historical scene baseline compared with the recent scene."}</p><div className="trajectory-chart">{(data?.timeline || []).map((item) => <div className="trajectory-column" key={item.month}><strong>{item.areaSqm.toLocaleString()}</strong><div className="trajectory-track"><div className="trajectory-bar" style={{ height: `${item.areaSqm ? Math.max(18, item.areaSqm / maxArea * 150) : 18}px` }} /></div><span>{item.month}</span></div>)}</div><div className="area-breakdown"><div className="breakdown-title">DETECTED REGION AREA</div>{(data?.areaBreakdown || []).map((item, index) => <button className="breakdown-row" key={item.label} onClick={() => data && setSelected(data.findings[index])}><span className={`breakdown-dot ${item.severity}`} /><strong>{String(index + 1).padStart(2, "0")} {data?.findings[index]?.areaName || item.label}</strong><b>{item.areaSqm.toLocaleString()} m²</b></button>)}</div></div><div className="panel case-panel"><div className="panel-head"><div><span className="eyebrow">EVIDENCE PACKAGE</span><h2>Case file</h2></div><FileText size={18} /></div>{selected ? <div className="case-content"><div className="case-id">{selected.id}<span className={`severity ${selected.severity}`}>{selected.severity.toUpperCase()}</span></div><h3>{selected.areaName || selected.label}</h3><p>Surface change detected between observation windows. The signal should be verified against permits and field conditions before enforcement.</p><div className="case-meta"><span><MapPin size={14} /> {selected.coordinates.join(", ")}</span><span><CalendarDays size={14} /> {selected.lastObserved}</span></div><div className="evidence-grid"><span>FLAGGED AREA <b>{selected.areaSqm.toLocaleString()} m²</b></span><span>EST. ERROR <b>±{(selected.detectionErrorSqm || 0).toLocaleString()} m²</b></span><span>REGION BBOX <b>{selected.regionBbox?.join(", ") || "Unavailable"}</b></span><span>MODEL SCORE <b>{selected.modelScore ? `${Math.round(selected.modelScore * 100)}%` : "Unavailable"}</b></span></div><div className="case-links"><a href={selected.googleMapsUrl} target="_blank" rel="noreferrer">OPEN GOOGLE MAPS <ArrowUpRight size={14} /></a><a href={selected.googleSatelliteUrl} target="_blank" rel="noreferrer">SATELLITE VIEW <ArrowUpRight size={14} /></a></div><button className="generate-button" onClick={downloadReport}>DOWNLOAD FULL REPORT <ArrowUpRight size={15} /></button></div> : <p className="empty">Select a flagged region to inspect its evidence package.</p>}</div></section>
+      <section className="lower-grid"><div className="panel timeline-panel"><div className="panel-head"><div><span className="eyebrow">TEMPORAL ANALYSIS</span><h2>Expansion trajectory</h2></div><span className="unit">AREA / M²</span></div><p className="timeline-note">{data?.timelineNote || "Historical scene baseline compared with the recent scene."}</p><div className="trajectory-chart">{(data?.timeline || []).map((item) => <div className="trajectory-column" key={item.month}><strong>{item.areaSqm.toLocaleString()}</strong><div className="trajectory-track"><div className="trajectory-bar" style={{ height: `${chartHeight(item.areaSqm)}px` }} /></div><span>{item.month}</span></div>)}</div><div className="area-breakdown"><div className="breakdown-title">DETECTED REGION AREA</div>{(data?.areaBreakdown || []).map((item, index) => <button className="breakdown-row" key={item.label} onClick={() => data && setSelected(data.findings[index])}><span className={`breakdown-dot ${item.severity}`} /><strong>{String(index + 1).padStart(2, "0")} {data?.findings[index]?.areaName || item.label}</strong><b>{item.areaSqm.toLocaleString()} m²</b></button>)}</div></div><div className="panel case-panel"><div className="panel-head"><div><span className="eyebrow">EVIDENCE PACKAGE</span><h2>Case file</h2></div><FileText size={18} /></div>{selected ? <div className="case-content"><div className="case-id">{selected.id}<span className={`severity ${selected.severity}`}>{selected.severity.toUpperCase()}</span></div><h3>{selected.areaName || selected.label}</h3><p>Surface change detected between observation windows. The signal should be verified against permits and field conditions before enforcement.</p><div className="case-meta"><span><MapPin size={14} /> {selected.coordinates.join(", ")}</span><span><CalendarDays size={14} /> {selected.lastObserved}</span></div><div className="evidence-grid"><span>FLAGGED AREA <b>{selected.areaSqm.toLocaleString()} m²</b></span><span>EST. ERROR <b>±{(selected.detectionErrorSqm || 0).toLocaleString()} m²</b></span><span>REGION BBOX <b>{selected.regionBbox?.join(", ") || "Unavailable"}</b></span><span>MODEL SCORE <b>{selected.modelScore ? `${Math.round(selected.modelScore * 100)}%` : "Unavailable"}</b></span></div><div className="case-links"><a href={selected.googleMapsUrl} target="_blank" rel="noreferrer">OPEN GOOGLE MAPS <ArrowUpRight size={14} /></a><a href={selected.googleSatelliteUrl} target="_blank" rel="noreferrer">SATELLITE VIEW <ArrowUpRight size={14} /></a></div><button className="generate-button" onClick={downloadReport}>DOWNLOAD FULL REPORT <ArrowUpRight size={15} /></button></div> : <p className="empty">Select a flagged region to inspect its evidence package.</p>}</div></section>
       <footer><span>GEOSENTINEL AI / HACKFRONT INDIA 2026</span><span>Detection is an intelligence signal, not a legal determination.</span></footer>
     </main>
   );

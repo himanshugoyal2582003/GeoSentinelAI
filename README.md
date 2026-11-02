@@ -112,6 +112,12 @@ API, separated by commas. For example:
 CORS_ORIGINS=https://geosentinel-ui.onrender.com
 ```
 
+The dashboard's **TRAIN CNN** button calls `/api/train`. The included Render
+Blueprint enables this endpoint for the hackathon. Training runs from the
+committed dataset and reloads the model when complete. For a public production
+deployment, set `TRAINING_ENABLED=false` and retrain from an authorized
+environment because this endpoint has no authentication layer.
+
 Local origins remain enabled for development. Do not use `*` with credentials.
 Set the frontend build environment variable `NEXT_PUBLIC_API_URL` to the
 deployed API URL, for example `https://geosentinel-api.onrender.com`.

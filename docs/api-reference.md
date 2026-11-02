@@ -95,6 +95,27 @@ Both images must be readable RGB images with identical dimensions and no more
 than four megapixels each. The endpoint returns the analysis response shape
 without live source metadata.
 
+## `POST /api/train`
+
+Starts asynchronous CNN training from the committed dataset. The endpoint
+returns immediately with a training state. It is available only when the
+backend environment variable `TRAINING_ENABLED=true`.
+
+## `GET /api/train`
+
+Returns the current training state:
+
+```json
+{
+  "status": "running",
+  "message": "CNN training is running."
+}
+```
+
+When complete, the backend reloads `change_cnn.pt`. Training is disabled by
+default on Render and should only be enabled temporarily for an authorized
+operator; this endpoint has no user authentication layer.
+
 ## CORS
 
 The backend always allows:
@@ -110,4 +131,3 @@ not used.
 
 `/media/historical-live.png` and `/media/recent-live.png` serve the latest
 downloaded comparison images from the backend media directory.
-

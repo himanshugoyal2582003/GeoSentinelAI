@@ -93,6 +93,20 @@ python train_model.py
 
 Confirm `backend/models/change_cnn.pt` exists and restart the API.
 
+### Train the CNN from the dashboard
+
+The **TRAIN CNN** button starts the same workflow as:
+
+```powershell
+python backend\train_model.py
+```
+
+Set `TRAINING_ENABLED=true` in the backend environment. The included Render
+Blueprint sets this to `true` for the hackathon. The dashboard polls `/api/train`
+and reports completion or failure. Disable the variable again after training for
+a public production deployment. Do not expose this unauthenticated endpoint to
+an untrusted audience.
+
 ### Frontend cannot call the API
 
 Check `NEXT_PUBLIC_API_URL`, the backend health endpoint, and `CORS_ORIGINS`.

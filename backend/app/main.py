@@ -3,6 +3,9 @@ from __future__ import annotations
 import io
 import json
 import os
+import subprocess
+import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -50,6 +53,8 @@ SENTINEL_REVISIT_DAYS = 5
 
 MODEL_PATH = str(Path(__file__).resolve().parents[1] / "models" / "change_cnn.pt")
 CHANGE_MODEL = load_model(MODEL_PATH)
+TRAINING_STATE: dict[str, Any] = {"status": "idle", "message": "Training has not been started."}
+TRAINING_LOCK = threading.Lock()
 
 
 @app.get("/api/health")
@@ -62,6 +67,54 @@ def model_status() -> dict[str, Any]:
     metrics_path = Path(MODEL_PATH).with_name("metrics.json")
     metrics = json.loads(metrics_path.read_text(encoding="utf-8")) if metrics_path.exists() else {}
     return {"loaded": CHANGE_MODEL is not None, "metrics": metrics}
+
+
+def _run_training() -> None:
+    global CHANGE_MODEL
+    try:
+        process = subprocess.run(
+            [sys.executable, "train_model.py"],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        with TRAINING_LOCK:
+            if process.returncode == 0:
+                CHANGE_MODEL = load_model(MODEL_PATH)
+                TRAINING_STATE.update({
+                    "status": "completed",
+                    "message": "CNN training completed and the model was reloaded.",
+                    "output": process.stdout[-2000:],
+                })
+            else:
+                TRAINING_STATE.update({
+                    "status": "failed",
+                    "message": "CNN training failed.",
+                    "output": (process.stdout + process.stderr)[-2000:],
+                })
+    except (OSError, ValueError) as exc:
+        with TRAINING_LOCK:
+            TRAINING_STATE.update({"status": "failed", "message": f"Could not start CNN training: {exc}"})
+
+
+@app.get("/api/train")
+def training_status() -> dict[str, Any]:
+    with TRAINING_LOCK:
+        return dict(TRAINING_STATE)
+
+
+@app.post("/api/train")
+def train_model() -> dict[str, Any]:
+    if os.getenv("TRAINING_ENABLED", "").lower() != "true":
+        raise HTTPException(status_code=403, detail="CNN training is disabled. Set TRAINING_ENABLED=true to enable it.")
+    with TRAINING_LOCK:
+        if TRAINING_STATE["status"] == "running":
+            return dict(TRAINING_STATE)
+        TRAINING_STATE.clear()
+        TRAINING_STATE.update({"status": "running", "message": "CNN training is running."})
+    threading.Thread(target=_run_training, daemon=True).start()
+    return dict(TRAINING_STATE)
 
 
 @app.get("/api/scans")
