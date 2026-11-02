@@ -19,10 +19,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 import torch
+from dotenv import load_dotenv
 
 from .change_model import load_model
 from .history import read_scans, save_scan
 
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 app = FastAPI(title="GeoSentinel AI API", version="0.1.0")
 
 

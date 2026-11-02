@@ -6,12 +6,18 @@
 
 ```powershell
 cd E:\hackfront\backend
+Copy-Item .env.example .env
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 python train_model.py
 uvicorn app.main:app --reload --port 8000
 ```
+
+`backend/.env.example` contains local `CORS_ORIGINS` and
+`TRAINING_ENABLED=true`. Copy it to `backend/.env`; the actual `.env` file is
+ignored by Git. Render does not receive this local file, so configure the same
+variables in the Render service environment or through `render.yaml`.
 
 ### Frontend
 

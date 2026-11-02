@@ -23,12 +23,17 @@ GeoSentinel is a hackathon MVP for monitoring suspicious quarry expansion from h
 
 ```powershell
 cd backend
+Copy-Item .env.example .env
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 python train_model.py
 uvicorn app.main:app --reload --port 8000
 ```
+
+The local `backend/.env` enables the CNN training button and configures local
+CORS. It is ignored by Git. On Render, set the same variables in the service
+environment; `render.yaml` enables training for the hackathon.
 
 `train_model.py` builds a CPU-friendly CNN from the real Sentinel-2 pair,
 evaluates it, and writes `backend/models/change_cnn.pt` plus
