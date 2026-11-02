@@ -1,0 +1,17 @@
+node_modules/
+.next/
+dist/
+coverage/
+
+backend/.venv/
+backend/__pycache__/
+backend/app/__pycache__/
+backend/**/*.pyc
+
+*.log
+.env
+.env.*
+!.env.example
+
+backend/data/live/*.png
+backend/data/live/last-result.json

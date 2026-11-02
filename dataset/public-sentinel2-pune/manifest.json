@@ -1,0 +1,30 @@
+{
+    "region":  "Pune quarry belt",
+    "bbox":  [
+                 73.82,
+                 18.48,
+                 73.9,
+                 18.56
+             ],
+    "scenes":  [
+                   {
+                       "role":  "historical",
+                       "itemId":  "S2B_MSIL2A_20251020T052749_R105_T43QCA_20251020T074024",
+                       "datetime":  "2025-10-20T05:27:49.024000Z",
+                       "cloudCover":  0.003816,
+                       "asset":  "rendered_preview",
+                       "file":  "historical.png",
+                       "source":  "Microsoft Planetary Computer / Copernicus Sentinel-2 L2A"
+                   },
+                   {
+                       "role":  "recent",
+                       "itemId":  "S2B_MSIL2A_20261015T052759_R105_T43QCA_20261015T090952",
+                       "datetime":  "2026-10-15T05:27:59.024000Z",
+                       "cloudCover":  0.081178,
+                       "asset":  "rendered_preview",
+                       "file":  "recent.png",
+                       "source":  "Microsoft Planetary Computer / Copernicus Sentinel-2 L2A"
+                   }
+               ],
+    "note":  "Public Sentinel-2 preview assets scraped for MVP comparison. These are not labels of illegal activity."
+}
