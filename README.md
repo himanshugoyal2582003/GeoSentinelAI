@@ -87,6 +87,66 @@ npm run dev
 
 Open http://localhost:3000. The frontend expects the API at `http://localhost:8000`; set `NEXT_PUBLIC_API_URL` to override it.
 
+## Documentation
+
+See the [complete documentation index](./docs/README.md) for the architecture,
+working flow, API reference, data model, operations guide, and labeling/training
+workflow.
+
+### Deploy the backend to Render
+
+The repository includes [`render.yaml`](./render.yaml) for a Render web service.
+Create a Blueprint from the repository, or configure a Python web service with:
+
+```text
+Root directory: backend
+Build command:  pip install -r requirements.txt
+Start command: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+Health check:  /api/health
+```
+
+Set `CORS_ORIGINS` in Render to the exact browser origin(s) that will call the
+API, separated by commas. For example:
+
+```text
+CORS_ORIGINS=https://geosentinel-ui.onrender.com
+```
+
+Local origins remain enabled for development. Do not use `*` with credentials.
+Set the frontend build environment variable `NEXT_PUBLIC_API_URL` to the
+deployed API URL, for example `https://geosentinel-api.onrender.com`.
+
+Render's default filesystem is ephemeral, so CSV scan history and downloaded
+live images are not durable across redeploys or restarts. Add a persistent disk
+or move these records to durable storage for production retention.
+
+### Deploy the frontend to Netlify
+
+The repository includes [`netlify.toml`](./netlify.toml). Import the repository
+into Netlify and use the detected configuration, or configure:
+
+```text
+Base directory: frontend
+Build command: npm run build
+Publish directory: frontend/.next
+```
+
+Set this Netlify environment variable before building:
+
+```text
+NEXT_PUBLIC_API_URL=https://your-backend.onrender.com
+```
+
+After Netlify gives the site its public URL, add that exact origin to Render's
+`CORS_ORIGINS`, for example:
+
+```text
+CORS_ORIGINS=https://your-site.netlify.app
+```
+
+If you add a custom frontend domain, include both origins separated by commas.
+Redeploy the Render backend after changing `CORS_ORIGINS`.
+
 ## Upload API
 
 `POST /api/detect` accepts `historical` and `recent` image files. The images must cover the same area and have the same dimensions. The response includes changed components, estimated area, coordinates, and a case report.

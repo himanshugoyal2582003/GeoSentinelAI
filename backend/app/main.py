@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -20,9 +21,22 @@ from .change_model import load_model
 from .history import read_scans, save_scan
 
 app = FastAPI(title="GeoSentinel AI API", version="0.1.0")
+
+
+def _cors_origins() -> list[str]:
+    configured = os.getenv("CORS_ORIGINS", "")
+    origins = {
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    }
+    origins.update(origin.strip().rstrip("/") for origin in configured.split(",") if origin.strip())
+    return sorted(origins)
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=_cors_origins(),
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
