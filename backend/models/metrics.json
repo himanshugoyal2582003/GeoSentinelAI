@@ -1,0 +1,12 @@
+{
+  "model": "ChangeCNN",
+  "seed": 42,
+  "patchSize": 32,
+  "channels": 6,
+  "trainSamples": 307,
+  "validationSamples": 77,
+  "validationAccuracy": 1.0,
+  "dataset": "E:\\hackfront\\dataset\\public-sentinel2-pune",
+  "labeling": "labels.csv expert labels when populated; otherwise measured top/bottom image-difference tiles.",
+  "warning": "This is a real Sentinel-2 pair but weakly supervised; it is not a validated illegal-mining model."
+}

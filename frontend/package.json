@@ -1,0 +1,24 @@
+{
+  "name": "geosentinel-dashboard",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "lucide-react": "0.468.0",
+    "leaflet": "1.9.4",
+    "next": "^16.4.3",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "recharts": "2.15.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.5",
+    "@types/leaflet": "1.9.15",
+    "@types/react": "19.0.3",
+    "@types/react-dom": "19.0.2",
+    "typescript": "5.7.2"
+  }
+}
