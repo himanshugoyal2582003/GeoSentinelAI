@@ -58,7 +58,7 @@ Import the repository into Netlify and set:
 ```text
 Base directory: frontend
 Build command: npm run build
-Publish directory: frontend/.next
+Publish directory: frontend/out
 ```
 
 Set the Netlify environment variable:

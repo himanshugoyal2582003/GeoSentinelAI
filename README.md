@@ -139,7 +139,7 @@ into Netlify and use the detected configuration, or configure:
 ```text
 Base directory: frontend
 Build command: npm run build
-Publish directory: frontend/.next
+Publish directory: frontend/out
 ```
 
 Set this Netlify environment variable before building:
