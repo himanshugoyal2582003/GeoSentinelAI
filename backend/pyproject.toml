@@ -1,0 +1,14 @@
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+ignore = [
+    "E501",    # line length
+    "B008",    # function call in argument defaults (FastAPI File, Query, Depends)
+    "BLE001",  # blind exception catching (needed for safe database / fallback resilience)
+    "S110",    # try-except-pass
+    "ISC004",  # implicit string concatenation
+    "RUF007",  # zip over pairwise
+    "RUF046",  # cast to int
+]

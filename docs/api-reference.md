@@ -131,3 +131,133 @@ not used.
 
 `/media/historical-live.png` and `/media/recent-live.png` serve the latest
 downloaded comparison images from the backend media directory.
+
+
+## `GET /api/health/ready`
+
+Readiness probe for zero-downtime deployments and orchestrators.
+Returns `200 OK` if the Neo4j database is reachable; returns `503 Service Unavailable` if the database cannot be contacted. Never claims readiness when Neo4j writes cannot succeed.
+
+```json
+{
+  "status": "ready",
+  "service": "geosentinel-api",
+  "database": "connected"
+}
+```
+
+## `POST /api/live-detect`
+
+Preferred live acquisition, analysis, and graph persistence endpoint.
+Accepts an optional `Idempotency-Key` header. Performs live Sentinel-2 satellite scene acquisition, runs change detection and CNN inference, and persists the full graph structure (Scan, Scenes, Observations, Region) transactionally into Neo4j.
+
+Returns the standard detection result with `scanId` and `source` metadata.
+
+> Note: `GET /api/live-detect` is retained as a backward-compatible alias and returns an `X-Deprecated: Use POST /api/live-detect instead` header.
+
+## `GET /api/scans/{scan_id}`
+
+Retrieves a single persisted scan by its `scan_id`. Returns `404 Not Found` if missing.
+
+```json
+{
+  "scan_id": "scan-20250101120000-aabbcc",
+  "mode": "live-sentinel2",
+  "status": "completed",
+  "historical_date": "2025-01-01",
+  "recent_date": "2025-10-01",
+  "changed_area_sqm": 15000,
+  "finding_count": 3,
+  "model_name": "ChangeCNN"
+}
+```
+
+## `GET /api/findings/{detection_id}`
+
+Retrieves details for a single `FindingObservation` node by its unique detection ID.
+
+```json
+{
+  "detection_id": "det-scan-001-GS-LIVE-001",
+  "original_finding_id": "GS-LIVE-001",
+  "scan_id": "scan-001",
+  "label": "Detected change 1",
+  "severity": "high",
+  "confidence": 0.88,
+  "area_sqm": 12500,
+  "latitude": 18.52,
+  "longitude": 73.86,
+  "review_status": "pending"
+}
+```
+
+## `GET /api/findings/{detection_id}/history`
+
+Spatial query finding other observations within a configurable radius across different scans.
+
+Query parameters:
+- `radius_m`: Search radius in metres (default: `500.0`, range `10.0` - `10000.0`).
+
+```json
+{
+  "detection_id": "det-scan-001-GS-LIVE-001",
+  "radius_m": 500.0,
+  "related_observations": [
+    {
+      "detection_id": "det-scan-002-GS-LIVE-001",
+      "distance_m": 42.5,
+      "confidence": 0.85,
+      "last_observed": "2025-11-01"
+    }
+  ]
+}
+```
+
+## `GET /api/graph/regions/{region_id}`
+
+Retrieves the monitoring region graph entity and its linked scan history.
+
+Query parameters:
+- `limit`: Max scans to return (default: `20`, max: `100`)
+- `offset`: Pagination offset (default: `0`)
+
+## `GET /api/graph/findings/{detection_id}/recommendations`
+
+Recommends candidate observations across different scans for human investigator review based on spatial proximity. Does not auto-merge observations.
+
+## `GET /api/investigations`
+
+Lists human review investigation cases with associated observation counts.
+
+Query parameters:
+- `limit`: Default `50`, max `200`
+- `offset`: Default `0`
+
+## `POST /api/investigations`
+
+Creates a new investigation case.
+
+Request body:
+```json
+{
+  "title": "Wagholi Pit Expansion Q3",
+  "description": "Suspicious perimeter growth near secondary road",
+  "status": "open",
+  "review_status": "pending"
+}
+```
+
+## `GET /api/investigations/{case_id}`
+
+Retrieves an investigation case and its array of linked finding observations.
+
+## `POST /api/investigations/{case_id}/observations`
+
+Associates a finding observation with an investigation case. Prevents duplicate relationships.
+
+Request body:
+```json
+{
+  "detection_id": "det-scan-001-GS-LIVE-001"
+}
+```

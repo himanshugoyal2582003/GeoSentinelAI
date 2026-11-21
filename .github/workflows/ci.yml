@@ -1,0 +1,55 @@
+name: CI
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest pytest-cov httpx ruff
+      - name: Lint (ruff)
+        run: ruff check app/ tests/ scripts/ --ignore E501
+      - name: Unit tests
+        run: pytest tests/unit/ -v --cov=app --cov-report=term-missing --cov-report=xml
+      - name: API tests
+        run: pytest tests/api/ -v --cov=app --cov-append --cov-report=term-missing
+      - name: Neo4j integration tests
+        if: env.NEO4J_TEST_URI != ''
+        env:
+          NEO4J_TEST_URI: ${{ secrets.NEO4J_TEST_URI }}
+          NEO4J_TEST_USERNAME: ${{ secrets.NEO4J_TEST_USERNAME }}
+          NEO4J_TEST_PASSWORD: ${{ secrets.NEO4J_TEST_PASSWORD }}
+          NEO4J_TEST_DATABASE: ${{ secrets.NEO4J_TEST_DATABASE }}
+        run: pytest tests/integration/ -v -m integration
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          file: backend/coverage.xml
+        continue-on-error: true
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
