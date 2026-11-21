@@ -10,7 +10,6 @@ Copy-Item .env.example .env
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-python train_model.py
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -92,14 +91,14 @@ the latest cached real result when available. The UI labels this response
 
 ### Model shows `difference-fallback`
 
-Run:
+The checked-in six-channel checkpoint is used until a new model is trained.
+To train the 10-channel OSCD model, first download and extract the OSCD Images
+and Train Labels archives, then follow the preparation commands in
+[`labeling-and-training.md`](./labeling-and-training.md). Running the trainer
+without prepared OSCD data fails explicitly.
 
-```powershell
-cd E:\hackfront\backend
-python train_model.py
-```
-
-Confirm `backend/models/change_cnn.pt` exists and restart the API.
+Confirm `backend/models/change_cnn.pt` exists and restart the API if it is
+missing or invalid.
 
 ### Train the CNN from the dashboard
 
@@ -109,11 +108,13 @@ The **TRAIN CNN** button starts the same workflow as:
 python backend\train_model.py
 ```
 
-Set `TRAINING_ENABLED=true` in the backend environment. The included Render
-Blueprint sets this to `true` for the hackathon. The dashboard polls `/api/train`
-and reports completion or failure. Disable the variable again after training for
-a public production deployment. Do not expose this unauthenticated endpoint to
-an untrusted audience.
+Set `TRAINING_ENABLED=true` and ensure prepared OSCD patches exist under
+`backend/data/oscd/` before starting training. The included Render Blueprint
+sets this to `true`, but deployment filesystems may not contain the large
+dataset, so training can fail until it is provisioned. The dashboard polls
+`/api/train` and reports completion or failure. Disable the variable again
+after training for a public production deployment. Do not expose this
+unauthenticated endpoint to an untrusted audience.
 
 ### Frontend cannot call the API
 

@@ -15,5 +15,6 @@ backend/**/*.pyc
 
 backend/data/live/*.png
 backend/data/live/last-result.json
+backend/data/oscd/
 
 frontend/out/

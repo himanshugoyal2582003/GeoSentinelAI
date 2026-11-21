@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowUpRight, CalendarDays, Crosshair, FileText, MapPin, Upload, Waves, BrainCircuit } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, CalendarDays, Crosshair, FileText, MapPin, Upload, Waves, BrainCircuit, Trash2, Pencil, Save } from "lucide-react";
 import type { Map as LeafletMap } from "leaflet";
 import "leaflet/dist/leaflet.css";
 
@@ -24,6 +24,18 @@ type Finding = {
   modelScore?: number;
   googleMapsUrl?: string;
   googleSatelliteUrl?: string;
+};
+
+type SiteGeometry =
+  | { type: "Polygon"; coordinates: number[][][] }
+  | { type: "MultiPolygon"; coordinates: number[][][][] };
+
+type MonitoringSite = {
+  siteId: string;
+  name: string;
+  geometry: SiteGeometry;
+  bbox: [number, number, number, number];
+  active: boolean;
 };
 
 type Dataset = {
@@ -49,7 +61,10 @@ type Dataset = {
     note: string;
     stale?: boolean;
     sceneCount?: number;
+    geometry?: SiteGeometry;
+    siteId?: string;
   };
+  regionId?: string;
 };
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -84,6 +99,12 @@ export default function Home() {
   const [trainingMessage, setTrainingMessage] = useState("");
   const [nextScanAt, setNextScanAt] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const [sites, setSites] = useState<MonitoringSite[]>([]);
+  const [siteName, setSiteName] = useState("");
+  const [siteGeometry, setSiteGeometry] = useState<SiteGeometry | null>(null);
+  const [siteDrawMode, setSiteDrawMode] = useState(false);
+  const [siteBusy, setSiteBusy] = useState(false);
+  const [siteError, setSiteError] = useState("");
   const waitingForDashboard = loading || (liveScanning && !data);
 
   function applyLiveResult(value: Dataset) {
@@ -106,6 +127,24 @@ export default function Home() {
         setError(reason instanceof Error ? reason.message : "Live satellite feed unavailable.");
         setLoading(false);
       });
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    fetch(`${API}/api/sites`)
+      .then(async (response) => {
+        if (!response.ok) throw new Error(await parseApiError(response, "Could not load monitoring sites."));
+        return response.json() as Promise<{ sites: MonitoringSite[] }>;
+      })
+      .then((value) => {
+        if (active) setSites(value.sites);
+      })
+      .catch((reason) => {
+        if (active) setSiteError(reason instanceof Error ? reason.message : "Could not load monitoring sites.");
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -149,6 +188,92 @@ export default function Home() {
     }
   }
 
+  async function importSiteFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setSiteDrawMode(false);
+    setSiteGeometry(null);
+    const form = new FormData();
+    form.append("name", siteName.trim() || file.name.replace(/\.(kml|geojson|json)$/i, ""));
+    form.append("file", file);
+    setSiteBusy(true);
+    setSiteError("");
+    try {
+      const response = await fetch(`${API}/api/sites/import`, { method: "POST", body: form });
+      if (!response.ok) throw new Error(await parseApiError(response, "Site import failed."));
+      const site = (await response.json()) as MonitoringSite;
+      setSites((current) => [...current, site].sort((a, b) => a.name.localeCompare(b.name)));
+      setSiteName("");
+      setSiteGeometry(null);
+    } catch (reason) {
+      setSiteError(reason instanceof Error ? reason.message : "Site import failed.");
+    } finally {
+      setSiteBusy(false);
+      event.target.value = "";
+    }
+  }
+
+  async function saveDrawnSite() {
+    if (!siteGeometry) {
+      setSiteError("Draw a polygon or import a KML/GeoJSON file first.");
+      return;
+    }
+    setSiteBusy(true);
+    setSiteError("");
+    try {
+      const response = await fetch(`${API}/api/sites`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: siteName, geometry: siteGeometry }),
+      });
+      if (!response.ok) throw new Error(await parseApiError(response, "Could not save monitoring site."));
+      const site = (await response.json()) as MonitoringSite;
+      setSites((current) => [...current, site].sort((a, b) => a.name.localeCompare(b.name)));
+      setSiteName("");
+      setSiteGeometry(null);
+    } catch (reason) {
+      setSiteError(reason instanceof Error ? reason.message : "Could not save monitoring site.");
+    } finally {
+      setSiteBusy(false);
+    }
+  }
+
+  async function scanSite(siteId: string) {
+    setLiveScanning(true);
+    setSiteBusy(true);
+    setError("");
+    try {
+      const response = await fetch(`${API}/api/sites/${encodeURIComponent(siteId)}/scan`, { method: "POST" });
+      if (!response.ok) throw new Error(await parseApiError(response, "Monitoring-site scan failed."));
+      applyLiveResult((await response.json()) as Dataset);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Monitoring-site scan failed.");
+    } finally {
+      setLiveScanning(false);
+      setSiteBusy(false);
+    }
+  }
+
+  async function removeSite(siteId: string) {
+    setSiteBusy(true);
+    setSiteError("");
+    try {
+      const response = await fetch(`${API}/api/sites/${encodeURIComponent(siteId)}`, { method: "DELETE" });
+      if (!response.ok) throw new Error(await parseApiError(response, "Could not remove monitoring site."));
+      setSites((current) => current.filter((site) => site.siteId !== siteId));
+    } catch (reason) {
+      setSiteError(reason instanceof Error ? reason.message : "Could not remove monitoring site.");
+    } finally {
+      setSiteBusy(false);
+    }
+  }
+
+  function handleDrawnGeometry(geometry: SiteGeometry | null) {
+    setSiteGeometry(geometry);
+    setSiteDrawMode(false);
+    if (geometry) setSiteError("");
+  }
+
   async function runLiveScan() {
     setLiveScanning(true);
     setError("");
@@ -168,11 +293,11 @@ export default function Home() {
 
   async function trainCnn() {
     setTraining(true);
-    setTrainingMessage("Starting CNN training...");
+    setTrainingMessage("Starting OSCD CNN training...");
     try {
       const response = await fetch(`${API}/api/train`, { method: "POST" });
       if (!response.ok) {
-        throw new Error(await parseApiError(response, "CNN training could not start. Enable TRAINING_ENABLED on the backend."));
+        throw new Error(await parseApiError(response, "OSCD training could not start."));
       }
       let state = (await response.json()) as { status: string; message: string };
       setTrainingMessage(state.message);
@@ -182,14 +307,17 @@ export default function Home() {
         await new Promise((resolve) => window.setTimeout(resolve, 2000));
         const statusResponse = await fetch(`${API}/api/train`);
         if (!statusResponse.ok) {
-          throw new Error(await parseApiError(statusResponse, "Could not read CNN training status"));
+          throw new Error(await parseApiError(statusResponse, "Could not read OSCD training status"));
         }
         state = (await statusResponse.json()) as { status: string; message: string };
         setTrainingMessage(state.message);
       }
       if (state.status === "failed") throw new Error(state.message);
+      if (state.status === "running") {
+        setTrainingMessage("Training continues in the backend. Click TRAIN CNN again later to check its status.");
+      }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "CNN training failed");
+      setError(reason instanceof Error ? reason.message : "OSCD training failed");
     } finally {
       setTraining(false);
     }
@@ -293,6 +421,68 @@ export default function Home() {
         </div>
       )}
 
+      <section className="site-manager">
+        <div className="site-manager-heading">
+          <div>
+            <span className="eyebrow">CUSTOM AREAS OF INTEREST</span>
+            <h2>Monitoring sites</h2>
+            <p>Import a KML/GeoJSON boundary or draw a polygon on the map, then scan within that site.</p>
+          </div>
+          <span className="site-count">{sites.length} SAVED</span>
+        </div>
+        <div className="site-form">
+          <input
+            aria-label="Monitoring site name"
+            value={siteName}
+            onChange={(event) => setSiteName(event.target.value)}
+            maxLength={120}
+            placeholder="Site name"
+          />
+          <button
+            className={`site-action ${siteDrawMode ? "active" : ""}`}
+            onClick={() => {
+              setSiteDrawMode((current) => !current);
+              setSiteGeometry(null);
+              setSiteError("");
+            }}
+            disabled={siteBusy}
+          >
+            <Pencil size={14} /> {siteDrawMode ? "CANCEL DRAWING" : "DRAW ON MAP"}
+          </button>
+          <label className={`site-action site-import ${siteBusy ? "disabled" : ""}`}>
+            <Upload size={14} /> IMPORT KML / GEOJSON
+            <input type="file" accept=".kml,.geojson,.json" onChange={importSiteFile} disabled={siteBusy} />
+          </label>
+          <button className="site-action primary" onClick={saveDrawnSite} disabled={siteBusy || !siteGeometry}>
+            <Save size={14} /> SAVE SITE
+          </button>
+        </div>
+        {siteDrawMode && <p className="site-hint">Click at least three boundary points on the map below, then finish the polygon.</p>}
+        {siteGeometry && <p className="site-hint">Polygon ready. Add a name and select SAVE SITE.</p>}
+        {siteError && <p className="site-error" role="alert">{siteError}</p>}
+        {!data && (
+          <div className="site-draw-map">
+            <LiveMap data={null} onSelect={setSelected} drawMode={siteDrawMode} draftGeometry={siteGeometry} onGeometryDrawn={handleDrawnGeometry} />
+          </div>
+        )}
+        <div className="site-list">
+          {sites.map((site) => (
+            <div className="site-row" key={site.siteId}>
+              <span><MapPin size={14} /> {site.name}</span>
+              <div>
+                <button className="site-action primary" onClick={() => scanSite(site.siteId)} disabled={siteBusy || liveScanning}>
+                  <Waves size={13} /> {liveScanning ? "SCANNING..." : "SCAN SITE"}
+                </button>
+                <button className="site-icon-button" aria-label={`Remove ${site.name}`} onClick={() => removeSite(site.siteId)} disabled={siteBusy}>
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            </div>
+          ))}
+          {sites.length === 0 && !siteError && <p className="site-empty">No custom sites saved yet.</p>}
+        </div>
+      </section>
+
       {!waitingForDashboard && data && (
         <>
           <section className="controls">
@@ -322,7 +512,9 @@ export default function Home() {
             <section className="satellite-compare">
               <div className="satellite-head">
                 <div>
-                  <span className="eyebrow">LIVE EVIDENCE / STATIC MONITORING LOCATION</span>
+                  <span className="eyebrow">
+                    {data.regionId ? "LIVE EVIDENCE / CUSTOM MONITORING SITE" : "LIVE EVIDENCE / STATIC MONITORING LOCATION"}
+                  </span>
                   <h2>Satellite comparison</h2>
                   <p>
                     {data.source.provider} · {data.source.sceneCount || 0} scenes · approximately 5-day Sentinel-2 revisit · BBOX{" "}
@@ -385,7 +577,13 @@ export default function Home() {
                   <i className="legend-dot high" /> HIGH RISK <i className="legend-dot medium" /> REVIEW
                 </span>
               </div>
-              <LiveMap data={data} onSelect={setSelected} />
+              <LiveMap
+                data={data}
+                onSelect={setSelected}
+                drawMode={siteDrawMode}
+                draftGeometry={siteGeometry}
+                onGeometryDrawn={handleDrawnGeometry}
+              />
             </div>
 
             <div className="panel findings-panel">
@@ -554,11 +752,32 @@ function Kpi({ label, value, detail, icon, alert = false }: { label: string; val
   );
 }
 
-function LiveMap({ data, onSelect }: { data: Dataset | null; onSelect: (finding: Finding) => void }) {
+function LiveMap({
+  data,
+  onSelect,
+  drawMode,
+  draftGeometry,
+  onGeometryDrawn,
+}: {
+  data: Dataset | null;
+  onSelect: (finding: Finding) => void;
+  drawMode: boolean;
+  draftGeometry: SiteGeometry | null;
+  onGeometryDrawn: (geometry: SiteGeometry | null) => void;
+}) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const markersGroupRef = useRef<import("leaflet").LayerGroup | null>(null);
   const rectRef = useRef<import("leaflet").Rectangle | null>(null);
+  const geometryLayerRef = useRef<import("leaflet").GeoJSON | null>(null);
+  const drawingLayerRef = useRef<import("leaflet").Polygon | null>(null);
+  const createDrawingLayerRef = useRef<((points: [number, number][]) => import("leaflet").Polygon) | null>(null);
+  const drawingPointsRef = useRef<[number, number][]>([]);
+  const onGeometryDrawnRef = useRef(onGeometryDrawn);
+  const [drawMessage, setDrawMessage] = useState("");
+  const [drawPointCount, setDrawPointCount] = useState(0);
+  const [mapReady, setMapReady] = useState(false);
+  onGeometryDrawnRef.current = onGeometryDrawn;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -572,6 +791,7 @@ function LiveMap({ data, onSelect }: { data: Dataset | null; onSelect: (finding:
       const bbox = data?.source?.bbox || [73.82, 18.48, 73.90, 18.56];
       const southWest: [number, number] = [bbox[1], bbox[0]];
       const northEast: [number, number] = [bbox[3], bbox[2]];
+      const displayedGeometry = data?.source?.geometry || draftGeometry;
 
       if (!mapRef.current) {
         const map = L.map(containerRef.current, { scrollWheelZoom: false }).fitBounds([southWest, northEast]);
@@ -594,10 +814,35 @@ function LiveMap({ data, onSelect }: { data: Dataset | null; onSelect: (finding:
         mapRef.current = map;
       } else {
         const map = mapRef.current;
-        map.fitBounds([southWest, northEast]);
+        if (!map) return;
         if (rectRef.current) {
           rectRef.current.setBounds([southWest, northEast]);
         }
+      }
+
+      const map = mapRef.current;
+      if (!map) return;
+      setMapReady(true);
+      createDrawingLayerRef.current = (points) => L.polygon(points, {
+        color: "#dc8050",
+        weight: 2,
+        fillColor: "#e89056",
+        fillOpacity: 0.12,
+      }).addTo(map);
+      if (geometryLayerRef.current) {
+        geometryLayerRef.current.remove();
+        geometryLayerRef.current = null;
+      }
+      if (displayedGeometry) {
+        const layer = L.geoJSON(displayedGeometry, {
+          style: { color: "#879b1b", weight: 3, fillColor: "#b7d334", fillOpacity: 0.14 },
+        }).addTo(map);
+        geometryLayerRef.current = layer;
+        if (layer.getBounds().isValid()) map.fitBounds(layer.getBounds(), { padding: [20, 20] });
+        rectRef.current?.setStyle({ opacity: 0, fillOpacity: 0 });
+      } else {
+        rectRef.current?.setStyle({ opacity: 1, fillOpacity: 0.08 });
+        map.fitBounds([southWest, northEast]);
       }
 
       if (markersGroupRef.current) {
@@ -621,7 +866,36 @@ function LiveMap({ data, onSelect }: { data: Dataset | null; onSelect: (finding:
     return () => {
       disposed = true;
     };
-  }, [data, onSelect]);
+  }, [data, draftGeometry, onSelect]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !drawMode) return;
+
+    drawingPointsRef.current = [];
+    setDrawPointCount(0);
+    setDrawMessage("");
+    const drawPoint = (event: import("leaflet").LeafletMouseEvent) => {
+      if (drawingPointsRef.current.length >= 5000) {
+        setDrawMessage("The polygon reached the 5,000-vertex limit.");
+        return;
+      }
+      drawingPointsRef.current = [
+        ...drawingPointsRef.current,
+        [event.latlng.lat, event.latlng.lng],
+      ];
+      setDrawPointCount(drawingPointsRef.current.length);
+      drawingLayerRef.current?.remove();
+      drawingLayerRef.current = createDrawingLayerRef.current?.(drawingPointsRef.current) || null;
+    };
+    map.on("click", drawPoint);
+    return () => {
+      map.off("click", drawPoint);
+      drawingLayerRef.current?.remove();
+      drawingLayerRef.current = null;
+      drawingPointsRef.current = [];
+    };
+  }, [drawMode, mapReady]);
 
   useEffect(() => {
     return () => {
@@ -630,9 +904,38 @@ function LiveMap({ data, onSelect }: { data: Dataset | null; onSelect: (finding:
         mapRef.current = null;
         markersGroupRef.current = null;
         rectRef.current = null;
+        geometryLayerRef.current = null;
+        drawingLayerRef.current = null;
       }
     };
   }, []);
 
-  return <div ref={containerRef} className="real-map" aria-label="OpenStreetMap showing flagged areas" />;
+  function finishDrawing() {
+    if (drawingPointsRef.current.length < 3) {
+      setDrawMessage("Add at least three boundary points before finishing.");
+      return;
+    }
+    const ring = drawingPointsRef.current.map(([latitude, longitude]) => [longitude, latitude]);
+    ring.push([...ring[0]]);
+    onGeometryDrawnRef.current({ type: "Polygon", coordinates: [ring] });
+  }
+
+  function cancelDrawing() {
+    onGeometryDrawnRef.current(null);
+    setDrawMessage("");
+  }
+
+  return (
+    <div className="map-frame">
+      <div ref={containerRef} className="real-map" aria-label="OpenStreetMap showing flagged areas" />
+      {drawMode && (
+        <div className="draw-toolbar" role="group" aria-label="Polygon drawing controls">
+          <span>CLICK MAP TO ADD POINTS · {drawPointCount} POINTS</span>
+          {drawMessage && <small role="status">{drawMessage}</small>}
+          <button onClick={finishDrawing}>FINISH POLYGON</button>
+          <button onClick={cancelDrawing}>CANCEL</button>
+        </div>
+      )}
+    </div>
+  );
 }

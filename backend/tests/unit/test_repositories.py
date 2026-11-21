@@ -348,6 +348,25 @@ class TestRegionRepository(unittest.TestCase):
         result = self.mod.get_region(session, "no-such-region")
         self.assertIsNone(result)
 
+    def test_list_sites_returns_monitoring_regions(self):
+        site = {"region_id": "site-1", "name": "North quarry"}
+        session = _make_session([_make_record(region=site)])
+        result = self.mod.list_sites(session, limit=10, offset=5)
+
+        self.assertEqual(result, [site])
+        self.assertEqual(session.run.call_args.kwargs, {"limit": 10, "offset": 5})
+
+    def test_deactivate_site_reports_missing_region(self):
+        session = _make_session([])
+        self.assertFalse(self.mod.deactivate_site(session, "site-missing"))
+
+    def test_deactivate_site_preserves_region_history(self):
+        session = _make_session([_make_record(region_id="site-1")])
+        self.assertTrue(self.mod.deactivate_site(session, "site-1"))
+        cypher = session.run.call_args.args[0]
+        self.assertIn("SET r.active = false", cypher)
+        self.assertNotIn("DELETE", cypher)
+
     def test_get_region_graph_returns_expected_shape(self):
         """get_region_graph always returns a dict with region/scans/findings."""
         session = _make_session([])

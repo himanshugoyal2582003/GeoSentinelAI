@@ -85,7 +85,7 @@ queryable store.
 
 | Label | Key property | Description |
 |---|---|---|
-| `MonitoringRegion` | `region_id` | A named geographic area that is scanned. Stores `name`, `bbox` (list), `created_at`. |
+| `MonitoringRegion` | `region_id` | A named geographic area that is scanned. Stores `name`, `bbox`, optional `geometry_geojson`, `is_monitoring_site`, `active`, and `created_at`. |
 | `Scan` | `scan_id` | One complete satellite acquisition and analysis run. Stores `created_at`, `mode` (`live`/`upload`), `region_id`, `historical_date`, `recent_date`, `changed_area_sqm`, `finding_count`, `model_name`, `processing_metadata` (JSON string), `summary` (JSON string), `source_metadata` (JSON string), `status`, `idempotency_key` (optional). |
 | `SatelliteScene` | `scene_id` | A single acquired satellite scene (Sentinel-2). Stores `provider`, `acquired_at`, `cloud_cover` (float, optional), `asset_metadata` (JSON string), `created_at`. |
 | `FindingObservation` | `detection_id` | A detected change component from one scan. Stores `original_finding_id`, `scan_id`, `label`, `severity` (`high`/`medium`/`low`), `confidence` (0–1), `area_sqm`, `location` (spatial Point, see below), `first_observed`, `last_observed`, `change_type`, `model_score` (optional), `detection_error_sqm`, `region_bbox` (JSON string), `review_status`, `created_at`. |
@@ -101,6 +101,11 @@ queryable store.
 | `(:Scan)-[:USED_SCENE]->(:SatelliteScene)` | Scan → Scene | Records which satellite scenes were used in the scan. |
 | `(:FindingObservation)-[:HAS_EVIDENCE]->(:EvidenceAsset)` | Finding → Asset | Links evidence files (images, reports) to a finding. |
 | `(:InvestigationCase)-[:INVESTIGATES]->(:FindingObservation)` | Case → Finding | Associates an investigation case with one or more findings. |
+
+Custom monitoring sites are `MonitoringRegion` nodes with
+`is_monitoring_site=true`. Their WGS-84 GeoJSON polygon is stored as a JSON
+string; scans retain the site boundary in `source_metadata`. Deleting a site
+sets `active=false` and preserves its graph and scan history.
 
 ### Spatial points (WGS-84)
 

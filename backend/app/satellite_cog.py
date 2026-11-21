@@ -8,8 +8,14 @@ import numpy as np
 import planetary_computer
 import rasterio
 from rasterio.enums import Resampling
+from rasterio.features import geometry_mask
 from rasterio.transform import Affine, from_origin
-from rasterio.warp import reproject, transform as transform_coordinates, transform_bounds
+from rasterio.warp import (
+    reproject,
+    transform as transform_coordinates,
+    transform_bounds,
+    transform_geom,
+)
 from rasterio.windows import from_bounds
 
 SENTINEL_BANDS = ("B02", "B03", "B04", "B08", "B11")
@@ -71,6 +77,7 @@ def read_sentinel2_scene(
     item: dict[str, Any],
     bbox: tuple[float, float, float, float],
     grid: RasterGrid | None = None,
+    geometry: dict[str, Any] | None = None,
 ) -> Sentinel2Raster:
     """Read only the target bbox from Sentinel-2 L2A COG assets."""
     target_grid = grid or create_target_grid(bbox)
@@ -93,6 +100,21 @@ def read_sentinel2_scene(
         raise ValueError("Sentinel-2 item is missing required SCL COG asset")
     scl = _read_asset_window(scl_asset, bbox, target_grid, Resampling.nearest)
     scl = np.nan_to_num(scl, nan=0).astype(np.uint8)
+    if geometry is not None:
+        projected_geometry = transform_geom("EPSG:4326", target_grid.crs, geometry)
+        inside_geometry = geometry_mask(
+            [projected_geometry],
+            out_shape=(target_grid.height, target_grid.width),
+            transform=target_grid.transform,
+            invert=True,
+        )
+        if not inside_geometry.any():
+            raise ValueError("Monitoring polygon contains no pixels at the requested resolution")
+        for band_name, band in bands.items():
+            band[~inside_geometry] = np.nan
+            if not np.isfinite(band).any():
+                raise ValueError(f"Sentinel-2 {band_name} has no valid pixels inside monitoring polygon")
+        scl[~inside_geometry] = 0
     return Sentinel2Raster(bands=bands, scl=scl, grid=target_grid)
 
 

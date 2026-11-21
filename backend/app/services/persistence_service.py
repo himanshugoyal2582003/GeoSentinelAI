@@ -29,7 +29,16 @@ MERGE (r:MonitoringRegion {region_id: $region_id})
 ON CREATE SET
     r.name       = $name,
     r.bbox       = $bbox,
+    r.geometry_geojson = $geometry_geojson,
+    r.is_monitoring_site = $is_monitoring_site,
+    r.active     = true,
     r.created_at = $created_at
+ON MATCH SET
+    r.name       = coalesce($name, r.name),
+    r.bbox       = coalesce($bbox, r.bbox),
+    r.geometry_geojson = coalesce($geometry_geojson, r.geometry_geojson),
+    r.is_monitoring_site = coalesce($is_monitoring_site, r.is_monitoring_site),
+    r.active     = true
 RETURN r.region_id AS region_id
 """
 
@@ -139,7 +148,8 @@ def persist_scan(
     # 3. Derive region info
     region_name = result.get("region", "Pune quarry belt")
     bbox = source.get("bbox", [73.82, 18.48, 73.90, 18.56])
-    region_id = f"region-{region_name.lower().replace(' ', '-')}"
+    region_id = result.get("regionId") or f"region-{region_name.lower().replace(' ', '-')}"
+    geometry = source.get("geometry")
 
     # 4. Build findings payload
     raw_findings = result.get("findings", [])
@@ -180,6 +190,8 @@ def persist_scan(
                 "region_id": region_id,
                 "region_name": region_name,
                 "bbox": _safe_json_str(bbox),
+                "geometry_geojson": _safe_json_str(geometry) if geometry else None,
+                "is_monitoring_site": bool(result.get("regionId")),
                 "mode": mode,
                 "historical_date": result.get("historicalDate", ""),
                 "recent_date": result.get("recentDate", ""),
@@ -218,7 +230,8 @@ def _write_all(tx: Any, p: dict[str, Any]) -> None:
     """Execute all Neo4j writes in a single transaction (called via execute_write)."""
     # Region
     r = tx.run(_MERGE_REGION, name=p["region_name"], region_id=p["region_id"],
-               bbox=p["bbox"], created_at=p["now"])
+               bbox=p["bbox"], geometry_geojson=p["geometry_geojson"],
+               is_monitoring_site=p["is_monitoring_site"], created_at=p["now"])
     r.consume()
 
     # Scan

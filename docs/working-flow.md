@@ -96,3 +96,16 @@ open. This is intentionally separate from satellite revisit timing:
 Keep the dashboard open for automatic polling. A server-side scheduler is not
 currently configured.
 
+## 8. Custom monitoring sites
+
+1. The user imports a KML/GeoJSON polygon or draws a boundary on the map.
+2. The dashboard sends the polygon to `POST /api/sites` or uploads the file to
+   `POST /api/sites/import`.
+3. The backend validates WGS-84 coordinates and stores the site as a
+   `MonitoringRegion` in Neo4j.
+4. **SCAN SITE** calls `POST /api/sites/{site_id}/scan`.
+5. Sentinel-2 search uses the polygon's bounding box; each scene is masked to
+   the polygon before spectral analysis, so pixels outside the boundary do not
+   contribute to findings.
+6. Deleting a site deactivates it while preserving its historical scans.
+

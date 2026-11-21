@@ -21,6 +21,10 @@ Returns service and model availability.
 Returns whether `change_cnn.pt` loaded and the contents of
 `backend/models/metrics.json`.
 
+The response includes `inputChannels` (`6` for the legacy RGB checkpoint or
+`10` for the trained multispectral model) and the model metrics. A 10-channel
+model is applied only to live Sentinel-2 scenes; RGB uploads are skipped.
+
 ## `GET /api/scans`
 
 Returns newest stored scan rows from Neo4j, falling back to
@@ -59,6 +63,49 @@ Acquires and analyzes public scenes for the fixed Pune bounding box.
 
 `source.stale` is `true` when the response is a cached real result. A fresh
 successful response does not set this flag.
+
+## Custom monitoring sites
+
+Sites are stored as `MonitoringRegion` nodes in Neo4j. Geometry must be a
+valid GeoJSON `Polygon` or `MultiPolygon` in WGS-84 longitude/latitude order.
+The API limits imports to 2 MB and geometries to 5,000 vertices. Antimeridian
+crossings are not supported; sites must fit within UTM latitudes (-80° to
+84°). Site scans are capped at four million 10 m grid pixels.
+
+### `GET /api/sites`
+
+Lists active sites. Supports `limit` (1-200) and `offset` (0 or greater).
+
+### `POST /api/sites`
+
+Creates a site from a GeoJSON geometry:
+
+```json
+{
+  "name": "North quarry",
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": [[[73.82, 18.48], [73.86, 18.48], [73.86, 18.52], [73.82, 18.52], [73.82, 18.48]]]
+  }
+}
+```
+
+### `POST /api/sites/import`
+
+Multipart upload with a required `name` and `file` (`.kml`, `.geojson`, or
+`.json`). GeoJSON `Feature`, `FeatureCollection`, `Polygon`, and `MultiPolygon`
+uploads are accepted; KML Polygon boundaries are converted to GeoJSON.
+
+### `GET /api/sites/{site_id}` / `DELETE /api/sites/{site_id}`
+
+Retrieves or deactivates a site. Deletion is soft so existing scan history is
+preserved.
+
+### `POST /api/sites/{site_id}/scan`
+
+Searches Sentinel-2 scenes for the site's bounding box, then masks analysis to
+the exact polygon. The result uses the standard detection response and records
+the site ID and boundary geometry. An `Idempotency-Key` header is optional.
 
 ### Finding shape
 
@@ -104,9 +151,11 @@ without live source metadata.
 
 ## `POST /api/train`
 
-Starts asynchronous CNN training from the committed dataset. The endpoint
-returns immediately with a training state. It is available only when the
-backend environment variable `TRAINING_ENABLED=true`.
+Starts asynchronous OSCD CNN training from prepared patches in
+`backend/data/oscd/`. The endpoint returns immediately with a training state.
+It is available only when the backend environment variable
+`TRAINING_ENABLED=true`, and reports failure if OSCD preparation has not been
+run.
 
 ## `GET /api/train`
 

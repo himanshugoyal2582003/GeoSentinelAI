@@ -1,48 +1,60 @@
 # Labeling and Training
 
-## Label file
+## OSCD training data
 
-Add patch labels to
-[`dataset/public-sentinel2-pune/labels.csv`](../dataset/public-sentinel2-pune/labels.csv):
+Phase 3 uses the Onera Satellite Change Detection (OSCD) benchmark rather
+than the RGB preview images in `dataset/public-sentinel2-pune`. Download and
+extract the **Images** and **Train Labels** archives from the
+[OSCD dataset page](https://ieee-dataport.org/open-access/oscd-onera-satellite-change-detection).
+Keep these archives outside Git. The extracted directories should contain:
 
-```csv
-x,y,label,source,notes
-120,80,1,expert,Confirmed quarry expansion
-250,160,0,expert,Stable land
+```text
+Onera Satellite Change Detection dataset - Images/
+  train.txt
+  city-name/
+    imgs_1_rect/B02.tif ... B11.tif
+    imgs_2_rect/B02.tif ... B11.tif
+Onera Satellite Change Detection dataset - Train Labels/
+  city-name/cm/cm.png
 ```
 
-- `x`, `y`: top-left patch coordinates in the dataset preview images.
-- `label`: `1` for confirmed change and `0` for stable land.
-- `source`: label provenance, normally `expert`.
-- `notes`: evidence or review note.
+Use the corresponding actual band files `B02`, `B03`, `B04`, `B08`, and
+`B11` from each rectified date folder. Labels are in the separate Train
+Labels archive. OSCD's held-out official test cities are not used in training
+or validation; 20% of the official training cities are held out by city for
+validation.
 
-The current trainer uses 32×32 patches. Labeled rows are used when present;
-otherwise it creates weak labels from the lowest and highest measured
-image-difference tiles.
-
-## Training
+From `backend`, prepare patches and train:
 
 ```powershell
-cd E:\hackfront\backend
+python prepare_oscd.py `
+  --source "D:\datasets\Onera Satellite Change Detection dataset - Images" `
+  --labels "D:\datasets\Onera Satellite Change Detection dataset - Train Labels"
 python train_model.py
 ```
 
-Outputs:
+Preparation writes 32×32, 10-channel paired patches and a manifest under
+`backend/data/oscd/`. The directory is ignored by Git. Training uses
+memory-mapped patch files and fails clearly if preparation, labels, or either
+class is missing.
+
+Training outputs:
 
 - `backend/models/change_cnn.pt`
 - `backend/models/metrics.json`
 
-The model has six input channels: historical RGB plus recent RGB. It is a
-small CPU-oriented CNN. The API loads it at process startup and falls back to
-image differencing if the artifact is missing or invalid.
+The model has ten input channels: B02, B03, B04, B08, and B11 for each date.
+The API reloads the trained model after successful training. Until OSCD data
+is supplied and training completes, the existing six-channel RGB checkpoint
+remains supported. An RGB upload cannot be scored by a 10-channel checkpoint,
+so that model score is skipped for uploads.
 
 ## Interpreting metrics
 
-The reported validation accuracy is only meaningful with enough independent,
-expert-labeled scene pairs. A high score from weak labels is not evidence that
+OSCD labels general land-cover change, not illegal quarry activity. Validation
+metrics are for the OSCD change-detection task only and do not establish that
 the system reliably detects illegal quarrying.
 
-For a stronger model, collect multiple dates and locations, label both changed
-and unchanged patches, preserve cloud/season diversity, and keep a separate
-expert-reviewed validation set.
+Quarry monitoring still needs independently collected, expert-reviewed quarry
+labels and a separate evaluation set before making operational claims.
 

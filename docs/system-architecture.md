@@ -32,10 +32,14 @@ flowchart LR
 ```text
 backend/
   app/main.py              FastAPI routes and image-processing pipeline
+  app/api/sites.py         Custom monitoring-site API
+  app/geometry.py          GeoJSON/KML validation and geometry conversion
   app/satellite_cog.py     Windowed Sentinel-2 COG reads and raster georeferencing
+  app/model_config.py      Shared Sentinel-2 model band and channel definitions
   app/change_model.py      ChangeCNN definition and model loading
   app/history.py           CSV scan/finding fallback persistence
-  train_model.py           Dataset loading, labeling, training, metrics
+  prepare_oscd.py          OSCD multispectral pair/mask conversion to patches
+  train_model.py           Memory-mapped supervised training and metrics
   models/                  change_cnn.pt and metrics.json
   data/                    scans.csv, findings.csv, live cache/media
 dataset/
@@ -57,6 +61,9 @@ scenes with `eo:cloud_cover < 20`, sorts by acquisition time, and retains the
 newest eight. `read_sentinel2_scene()` signs and window-reads each B02, B03,
 B04, B08, B11, and SCL COG asset, resampling into one 10 m UTM grid. Assets
 with no valid pixels in the requested region are rejected.
+Custom site scans search the site's WGS-84 bounding box and mask every raster
+band to the exact polygon before analysis. The grid is limited to four million
+pixels per scan.
 
 ### Analysis
 
@@ -67,12 +74,15 @@ with no valid pixels in the requested region are rejected.
 3. Mask SCL no-data, shadow, unclassified, cloud, cirrus, and snow classes.
 4. Flag NDVI loss or BSI gain above the configured minimum/90th-percentile
    change threshold.
-5. Estimate component coordinates from the UTM raster transform; use the
-   existing CNN as an additional score.
-6. Connected-component extraction with a minimum component size.
-7. Area, confidence, severity, coordinates, bounding box, and map links from
+5. Estimate component coordinates from the UTM raster transform.
+6. Score each finding with the compatible six-channel RGB checkpoint or,
+   after OSCD training, the ten-channel multispectral model.
+7. Connected-component extraction with a minimum component size.
+8. Area, confidence, severity, coordinates, bounding box, and map links from
    the georeferenced raster grid.
-8. Optional `ChangeCNN` score blended into confidence.
+
+The 10-channel model is skipped for RGB-only uploads. OSCD models land-cover
+change and is not trained to identify illegal quarry activity.
 
 The latest pair supplies the main findings. Adjacent pairs supply timeline
 points. At most ten components are returned per pair.

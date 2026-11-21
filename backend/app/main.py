@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -29,9 +30,13 @@ from .api.graph import router as graph_router
 from .api.health import router as health_router
 from .api.investigations import router as investigations_router
 from .api.scans import router as scans_router
+from .api.sites import router as sites_router
 from .change_model import load_model
 from .db.neo4j import get_driver, neo4j_lifespan
 from .history import save_scan
+from .geometry import geometry_bbox, normalize_polygon_geometry
+from .model_config import MODEL_BANDS, MODEL_INPUT_CHANNELS
+from .repositories import region_repository
 from .services.detection_service import (
     validate_coordinates,
     validate_image_pair,
@@ -93,6 +98,7 @@ app.include_router(scans_router)
 app.include_router(findings_router)
 app.include_router(investigations_router)
 app.include_router(graph_router)
+app.include_router(sites_router)
 
 MEDIA_DIR = Path(__file__).resolve().parents[1] / "data" / "live"
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
@@ -101,6 +107,7 @@ app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
 STATIC_BBOX = (73.82, 18.48, 73.90, 18.56)
 MAX_TIMELINE_SCENES = 8
 SENTINEL_REVISIT_DAYS = 5
+MAX_SITE_GRID_PIXELS = 4_000_000
 
 MODEL_PATH = str(Path(__file__).resolve().parents[1] / "models" / "change_cnn.pt")
 CHANGE_MODEL = load_model(MODEL_PATH)
@@ -112,7 +119,11 @@ TRAINING_LOCK = threading.Lock()
 def model_status() -> dict[str, Any]:
     metrics_path = Path(MODEL_PATH).with_name("metrics.json")
     metrics = json.loads(metrics_path.read_text(encoding="utf-8")) if metrics_path.exists() else {}
-    return {"loaded": CHANGE_MODEL is not None, "metrics": metrics}
+    return {
+        "loaded": CHANGE_MODEL is not None,
+        "inputChannels": CHANGE_MODEL.input_channels if CHANGE_MODEL is not None else None,
+        "metrics": metrics,
+    }
 
 
 def _run_training() -> None:
@@ -127,16 +138,24 @@ def _run_training() -> None:
         )
         with TRAINING_LOCK:
             if process.returncode == 0:
-                CHANGE_MODEL = load_model(MODEL_PATH)
-                TRAINING_STATE.update({
-                    "status": "completed",
-                    "message": "CNN training completed and the model was reloaded.",
-                    "output": process.stdout[-2000:],
-                })
+                trained_model = load_model(MODEL_PATH)
+                if trained_model is None or trained_model.input_channels != MODEL_INPUT_CHANNELS:
+                    TRAINING_STATE.update({
+                        "status": "failed",
+                        "message": "Training completed but the 10-channel model could not be loaded.",
+                        "output": process.stdout[-2000:],
+                    })
+                else:
+                    CHANGE_MODEL = trained_model
+                    TRAINING_STATE.update({
+                        "status": "completed",
+                        "message": "OSCD 10-channel CNN training completed and the model was reloaded.",
+                        "output": process.stdout[-2000:],
+                    })
             else:
                 TRAINING_STATE.update({
                     "status": "failed",
-                    "message": "CNN training failed.",
+                    "message": "OSCD CNN training failed. Check the prepared dataset and backend output for details.",
                     "output": (process.stdout + process.stderr)[-2000:],
                 })
     except (OSError, ValueError) as exc:
@@ -154,11 +173,20 @@ def training_status() -> dict[str, Any]:
 def train_model() -> dict[str, Any]:
     if os.getenv("TRAINING_ENABLED", "").lower() != "true":
         raise HTTPException(status_code=403, detail="CNN training is disabled. Set TRAINING_ENABLED=true to enable it.")
+    oscd_data_dir = Path(__file__).resolve().parents[1] / "data" / "oscd"
+    if not (oscd_data_dir / "train").is_dir() or not (oscd_data_dir / "validation").is_dir():
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Prepared OSCD patches are missing. Run prepare_oscd.py with the extracted "
+                "OSCD Images and Train Labels directories before training."
+            ),
+        )
     with TRAINING_LOCK:
         if TRAINING_STATE["status"] == "running":
             return dict(TRAINING_STATE)
         TRAINING_STATE.clear()
-        TRAINING_STATE.update({"status": "running", "message": "CNN training is running."})
+        TRAINING_STATE.update({"status": "running", "message": "OSCD CNN training is running."})
     threading.Thread(target=_run_training, daemon=True).start()
     return dict(TRAINING_STATE)
 
@@ -200,6 +228,7 @@ def _analyse_pair(
     recent_date: str,
     *,
     spectral_change: SpectralChange | None = None,
+    spectral_model_input: np.ndarray | None = None,
     raster_grid: RasterGrid | None = None,
     alignment_shift: tuple[float, float] | None = None,
 ) -> dict[str, Any]:
@@ -245,17 +274,27 @@ def _analyse_pair(
         confidence_scale = 0.25 if spectral_change is not None else 1 / 255
         confidence = min(0.98, 0.65 + float(component_signal) * confidence_scale)
         model_score = None
-        if CHANGE_MODEL:
+        if CHANGE_MODEL is not None and width >= 32 and height >= 32:
             patch_x = max(0, min(width - 32, x + component_width // 2 - 16))
             patch_y = max(0, min(height - 32, y + component_height // 2 - 16))
-            patch = np.concatenate(
-                [old_image[patch_y : patch_y + 32, patch_x : patch_x + 32],
-                 aligned_image[patch_y : patch_y + 32, patch_x : patch_x + 32]],
-                axis=2,
-            ).transpose(2, 0, 1) / 255
-            with torch.no_grad():
-                model_score = float(torch.sigmoid(CHANGE_MODEL(torch.from_numpy(patch.astype(np.float32))[None]))[0])
-            confidence = round((confidence + model_score) / 2, 3)
+            model_patch = None
+            if CHANGE_MODEL.input_channels == MODEL_INPUT_CHANNELS and spectral_model_input is not None:
+                model_patch = spectral_model_input[:, patch_y : patch_y + 32, patch_x : patch_x + 32]
+            elif CHANGE_MODEL.input_channels == 6:
+                model_patch = np.concatenate(
+                    [old_image[patch_y : patch_y + 32, patch_x : patch_x + 32],
+                     aligned_image[patch_y : patch_y + 32, patch_x : patch_x + 32]],
+                    axis=2,
+                ).transpose(2, 0, 1) / 255
+            if model_patch is not None and model_patch.shape == (CHANGE_MODEL.input_channels, 32, 32):
+                model_patch = np.nan_to_num(model_patch, nan=0.0, posinf=0.0, neginf=0.0)
+                with torch.no_grad():
+                    model_score = float(
+                        torch.sigmoid(
+                            CHANGE_MODEL(torch.from_numpy(model_patch.astype(np.float32))[None])
+                        )[0]
+                    )
+                confidence = round((confidence + model_score) / 2, 3)
         if spectral_change is None:
             change_type = "Spectral surface change"
         else:
@@ -298,6 +337,8 @@ def _analyse_pair(
         "threshold": round(threshold, 4 if spectral_change is not None else 2),
         "components": len(findings),
         "model": "ChangeCNN" if CHANGE_MODEL else "difference-fallback",
+        "modelInputChannels": CHANGE_MODEL.input_channels if CHANGE_MODEL is not None else None,
+        "modelAppliedToFindings": sum(item["modelScore"] is not None for item in findings),
         "cloudMaskPixels": int(cloud_mask.sum()),
         "alignmentShiftPixels": [round(shift[0], 3), round(shift[1], 3)],
         "seasonalNormalization": "per-channel percentile matching",
@@ -308,6 +349,12 @@ def _analyse_pair(
             "spectralIndices": ["NDVI", "BSI"],
             "changeSignal": "NDVI loss or BSI gain",
         })
+    if (
+        CHANGE_MODEL is not None
+        and CHANGE_MODEL.input_channels == MODEL_INPUT_CHANNELS
+        and spectral_model_input is None
+    ):
+        processing["modelNote"] = "The 10-channel model is skipped for RGB-only image uploads."
     return {
         "mode": mode,
         "region": "Pune quarry belt",
@@ -369,11 +416,11 @@ def _align_image(reference: np.ndarray, moving: np.ndarray) -> tuple[np.ndarray,
     return aligned, (shift_x, shift_y)
 
 
-def _read_live_cache() -> dict[str, Any] | None:
-    if not CACHE_FILE.exists():
+def _read_live_cache(cache_file: Path = CACHE_FILE) -> dict[str, Any] | None:
+    if not cache_file.exists():
         return None
     try:
-        cached = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+        cached = json.loads(cache_file.read_text(encoding="utf-8"))
         cached["source"]["stale"] = True
         cached["source"]["note"] = (
             "Provider rate limit reached. Showing the most recent successfully downloaded "
@@ -384,10 +431,12 @@ def _read_live_cache() -> dict[str, Any] | None:
         return None
 
 
-def _live_scenes() -> list[dict[str, Any]]:
+def _live_scenes(
+    bbox: tuple[float, float, float, float] = STATIC_BBOX,
+) -> list[dict[str, Any]]:
     payload = json.dumps({
         "collections": ["sentinel-2-l2a"],
-        "bbox": list(STATIC_BBOX),
+        "bbox": list(bbox),
         "datetime": "2025-01-01T00:00:00Z/2026-12-31T23:59:59Z",
         "limit": 100,
         "query": {"eo:cloud_cover": {"lt": 20}},
@@ -444,6 +493,7 @@ def _analyse_scene_pair(
     historical_date: str,
     recent_date: str,
     mode: str,
+    bbox: tuple[float, float, float, float] = STATIC_BBOX,
 ) -> dict[str, Any]:
     old_image = rgb_preview(historical.bands).astype(np.float32)
     new_image = rgb_preview(recent.bands).astype(np.float32)
@@ -455,32 +505,59 @@ def _analyse_scene_pair(
         recent.scl,
         shift,
     )
+    shift_y, shift_x = int(round(shift[1])), int(round(shift[0]))
+    historical_channels = np.stack([historical.bands[name] for name in MODEL_BANDS])
+    recent_channels = np.stack([
+        np.roll(recent.bands[name], (shift_y, shift_x), axis=(0, 1))
+        for name in MODEL_BANDS
+    ])
+    spectral_model_input = np.nan_to_num(
+        np.clip(np.concatenate([historical_channels, recent_channels], axis=0), 0, 1),
+        nan=0.0,
+        posinf=0.0,
+        neginf=0.0,
+    ).astype(np.float32)
     return _analyse_pair(
         old_image,
         new_image,
-        (STATIC_BBOX[1] + STATIC_BBOX[3]) / 2,
-        (STATIC_BBOX[0] + STATIC_BBOX[2]) / 2,
+        (bbox[1] + bbox[3]) / 2,
+        (bbox[0] + bbox[2]) / 2,
         recent.grid.resolution_m,
         mode,
         historical_date,
         recent_date,
         spectral_change=spectral_change,
+        spectral_model_input=spectral_model_input,
         raster_grid=recent.grid,
         alignment_shift=shift,
     )
 
 
-def _execute_live_detect(idempotency_key: str | None = None) -> dict[str, Any]:
+def _execute_live_detect(
+    idempotency_key: str | None = None,
+    *,
+    bbox: tuple[float, float, float, float] = STATIC_BBOX,
+    geometry: dict[str, Any] | None = None,
+    region_name: str = "Pune quarry belt",
+    region_id: str | None = None,
+) -> dict[str, Any]:
     """Internal implementation of live detection."""
+    cache_file = CACHE_FILE if region_id is None else MEDIA_DIR / f"last-result-{region_id}.json"
+    media_suffix = "live" if region_id is None else region_id
     try:
-        scenes = _live_scenes()
-        grid = create_target_grid(STATIC_BBOX, resolution_m=10)
+        grid = create_target_grid(bbox, resolution_m=10)
+        if grid.width * grid.height > MAX_SITE_GRID_PIXELS:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Monitoring area exceeds the {MAX_SITE_GRID_PIXELS:,}-pixel scan limit.",
+            )
+        scenes = _live_scenes(bbox)
         first_raster = None
         previous_raster = None
         previous_scene = None
         timeline = []
         for scene in scenes:
-            current_raster = read_sentinel2_scene(scene, STATIC_BBOX, grid)
+            current_raster = read_sentinel2_scene(scene, bbox, grid, geometry)
             if first_raster is None:
                 first_raster = current_raster
             if previous_raster is not None and previous_scene is not None:
@@ -490,6 +567,7 @@ def _execute_live_detect(idempotency_key: str | None = None) -> dict[str, Any]:
                     previous_scene["properties"]["datetime"][:10],
                     scene["properties"]["datetime"][:10],
                     "timeline",
+                    bbox,
                 )
                 timeline.append({
                     "month": scene["properties"]["datetime"][:10],
@@ -503,8 +581,8 @@ def _execute_live_detect(idempotency_key: str | None = None) -> dict[str, Any]:
         historical, recent = scenes[0], scenes[-1]
         old_image = rgb_preview(first_raster.bands)
         new_image = rgb_preview(previous_raster.bands)
-        historical_path = MEDIA_DIR / "historical-live.png"
-        recent_path = MEDIA_DIR / "recent-live.png"
+        historical_path = MEDIA_DIR / f"historical-{media_suffix}.png"
+        recent_path = MEDIA_DIR / f"recent-{media_suffix}.png"
         Image.fromarray(old_image).save(historical_path, format="PNG")
         Image.fromarray(new_image).save(recent_path, format="PNG")
         result = _analyse_scene_pair(
@@ -513,6 +591,7 @@ def _execute_live_detect(idempotency_key: str | None = None) -> dict[str, Any]:
             historical["properties"]["datetime"][:10],
             recent["properties"]["datetime"][:10],
             "live-sentinel2",
+            bbox,
         )
         _add_area_names(result["findings"])
         result["timeline"] = [{"month": historical["properties"]["datetime"][:10], "areaSqm": 0}] + timeline
@@ -523,7 +602,7 @@ def _execute_live_detect(idempotency_key: str | None = None) -> dict[str, Any]:
         )
         result["source"] = {
             "provider": "Microsoft Planetary Computer / Copernicus Sentinel-2 L2A",
-            "bbox": list(STATIC_BBOX),
+            "bbox": list(bbox),
             "historicalItem": historical["id"],
             "recentItem": recent["id"],
             "historicalCloudCover": historical["properties"].get("eo:cloud_cover"),
@@ -531,14 +610,18 @@ def _execute_live_detect(idempotency_key: str | None = None) -> dict[str, Any]:
             "assetType": "Native Sentinel-2 L2A COG",
             "bands": ["B02", "B03", "B04", "B08", "B11", "SCL"],
             "resolutionMeters": grid.resolution_m,
-            "historicalImage": "/media/historical-live.png",
-            "recentImage": "/media/recent-live.png",
+            "historicalImage": f"/media/historical-{media_suffix}.png",
+            "recentImage": f"/media/recent-{media_suffix}.png",
             "sceneCount": len(scenes),
             "sceneCadenceDays": SENTINEL_REVISIT_DAYS,
             "monitoringIntervalMinutes": 10,
             "sceneDates": [scene["properties"]["datetime"][:10] for scene in scenes],
             "note": "Public satellite imagery; detections are intelligence signals, not legal determinations.",
         }
+        if geometry is not None:
+            result["region"] = region_name
+            result["regionId"] = region_id
+            result["source"]["geometry"] = geometry
 
         # Persist to Neo4j (and CSV fallback)
         try:
@@ -554,12 +637,12 @@ def _execute_live_detect(idempotency_key: str | None = None) -> dict[str, Any]:
             logger.warning("Neo4j persistence failed, saving via CSV fallback: %s", exc)
             result["scanId"] = save_scan(result, result["source"])
 
-        CACHE_FILE.write_text(json.dumps(result), encoding="utf-8")
+        cache_file.write_text(json.dumps(result), encoding="utf-8")
         return result
     except HTTPException:
         raise
     except HTTPError as exc:
-        cached = _read_live_cache()
+        cached = _read_live_cache(cache_file)
         if cached and exc.code == 429:
             return cached
         raise HTTPException(
@@ -567,7 +650,7 @@ def _execute_live_detect(idempotency_key: str | None = None) -> dict[str, Any]:
             detail=f"Live Sentinel-2 provider rate-limited the request (HTTP {exc.code}). Try again later.",
         ) from exc
     except Exception as exc:
-        cached = _read_live_cache()
+        cached = _read_live_cache(cache_file)
         if cached:
             return cached
         raise HTTPException(status_code=502, detail=f"Live Sentinel-2 acquisition failed: {exc}") from exc
@@ -589,6 +672,38 @@ def live_detect(
     """Backward-compatible GET endpoint for live detection (deprecated; use POST)."""
     response.headers["X-Deprecated"] = "Use POST /api/live-detect instead"
     return _execute_live_detect(idempotency_key=idempotency_key)
+
+
+@app.post("/api/sites/{site_id}/scan")
+def scan_site(
+    site_id: str,
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
+    if not re.fullmatch(r"site-[0-9a-f]{32}", site_id):
+        raise HTTPException(status_code=404, detail="Monitoring site not found.")
+    try:
+        with get_driver().session() as session:
+            region = region_repository.get_region(session, site_id)
+        if not region or not region.get("is_monitoring_site") or region.get("active") is False:
+            raise HTTPException(status_code=404, detail="Monitoring site not found.")
+        geometry_value = region.get("geometry_geojson")
+        if isinstance(geometry_value, str):
+            geometry_value = json.loads(geometry_value)
+        geometry = normalize_polygon_geometry(geometry_value)
+        bbox = geometry_bbox(geometry)
+        region_name = region.get("name") or "Monitoring site"
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to load monitoring site %s", site_id)
+        raise HTTPException(status_code=503, detail="Monitoring site storage is unavailable.") from exc
+    return _execute_live_detect(
+        idempotency_key=f"{site_id}:{idempotency_key}" if idempotency_key else None,
+        bbox=bbox,
+        geometry=geometry,
+        region_name=region_name,
+        region_id=site_id,
+    )
 
 
 @app.post("/api/detect")

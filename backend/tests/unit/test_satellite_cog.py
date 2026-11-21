@@ -49,6 +49,22 @@ def test_reads_reflectance_and_scl_into_common_10m_grid(tmp_path, monkeypatch) -
     assert np.all(result.scl[finite] == 4)
     assert np.all(result.scl[~finite] == 0)
 
+    geometry = {
+        "type": "Polygon",
+        "coordinates": [[
+            [73.82, 18.48],
+            [73.86, 18.48],
+            [73.86, 18.56],
+            [73.82, 18.56],
+            [73.82, 18.48],
+        ]],
+    }
+    clipped = read_sentinel2_scene({"assets": assets}, bbox, grid, geometry)
+    outside = ~np.isfinite(clipped.bands["B08"])
+    assert outside.any()
+    assert np.isfinite(clipped.bands["B08"]).any()
+    assert np.all(clipped.scl[outside] == 0)
+
 
 def test_rejects_asset_window_without_valid_pixels(tmp_path, monkeypatch) -> None:
     bbox = (73.82, 18.48, 73.90, 18.56)

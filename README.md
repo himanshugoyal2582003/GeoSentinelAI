@@ -7,6 +7,7 @@ GeoSentinel is a hackathon MVP for monitoring suspicious quarry expansion from h
 - FastAPI backend with:
   - public Sentinel-2 L2A scene acquisition for the Pune monitoring region;
   - native 10 m COG band reads, NDVI/BSI change signals, and SCL cloud masking;
+  - user-defined monitoring polygons with KML/GeoJSON import and custom scans;
   - upload-based image differencing using Pillow and NumPy;
   - connected-component extraction, area estimation, severity scoring, and case-file generation;
   - retry and cached-real-feed handling when the public provider rate-limits requests.
@@ -57,7 +58,6 @@ Copy-Item .env.example .env
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-python train_model.py
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -65,19 +65,25 @@ The local `backend/.env` enables the CNN training button and configures local
 CORS. It is ignored by Git. On Render, set the same variables in the service
 environment; `render.yaml` enables training for the hackathon.
 
-`train_model.py` builds a CPU-friendly CNN from the real Sentinel-2 pair,
-evaluates it, and writes `backend/models/change_cnn.pt` plus
-`backend/models/metrics.json`. The API loads the model on startup and exposes
-its status at `GET /api/model`. If the model artifact is absent, image
-differencing remains available as an explicit fallback.
+The checked-in model is a legacy six-channel RGB checkpoint. Phase 3 prepares
+OSCD Sentinel-2 multispectral data into ignored local files under
+`backend/data/oscd/` and trains a 10-channel model when the dataset is
+available. Download and extract the OSCD Images and Train Labels archives,
+then run these commands from `backend`:
 
-Training now uses the real public Sentinel-2 pair in
-`dataset/public-sentinel2-pune`. It creates weak labels from measured image
-difference tiles. This is a real-image workflow, but it is not a validated
-illegal-mining model; production training requires expert-labeled scene pairs.
-To add real labels, append rows to `dataset/public-sentinel2-pune/labels.csv`
-with `x,y,label` (`label` is `1` for confirmed quarry change and `0` for
-stable land), then retrain. The script uses those labels when present.
+```powershell
+python prepare_oscd.py `
+  --source "D:\datasets\Onera Satellite Change Detection dataset - Images" `
+  --labels "D:\datasets\Onera Satellite Change Detection dataset - Train Labels"
+python train_model.py
+```
+
+The training API loads a resulting model at startup and exposes status through
+`GET /api/model`. Until OSCD is prepared and trained, the existing six-channel
+checkpoint remains supported. The OSCD model scores live multispectral scenes;
+it is skipped for RGB-only uploads. OSCD is a general land-cover change
+benchmark, not a validated illegal-quarry dataset. See the
+[labeling and training guide](./docs/labeling-and-training.md) for details.
 
 Long-term monitoring now includes:
 
@@ -88,13 +94,13 @@ Long-term monitoring now includes:
 - Neo4j scan/finding persistence with CSV fallback in `backend/data/`;
 - `GET /api/scans` for stored scan history and finding tracking.
 
-### Train first, then scan the static satellite location
+### Scan the static satellite location
 
-Start the backend in this order:
+The checked-in six-channel checkpoint loads when the backend starts. To use
+the OSCD 10-channel model instead, prepare and train it first as described
+above. Start the backend from `backend`:
 
 ```powershell
-cd E:\hackfront\backend
-python train_model.py
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -107,10 +113,10 @@ Invoke-RestMethod http://localhost:8000/api/live-detect
 `/api/live-detect` fetches up to eight newest low-cloud Sentinel-2 L2A scenes
 from the public Planetary Computer catalog for the static Pune bounding box.
 It reads the B02, B03, B04, B08, B11, and SCL COG windows, aligns reflectance
-data to a common 10 m UTM grid, and uses NDVI loss, BSI gain, and SCL masking
-for change signals. RGB images saved under `/media/` are display previews only.
-The existing `ChangeCNN` supplies an additional score, and findings include
-georeferenced coordinates.
+data to a common 10 m UTM grid, and uses NDVI loss, BSI gain, and SCL masking for change signals. RGB images saved
+under `/media/` are display previews only. A 10-channel `ChangeCNN` trained
+on OSCD supplies an additional live-scene score; the legacy six-channel
+checkpoint remains compatible. Findings include georeferenced coordinates.
 Sentinel-2 revisits the region approximately every five days; cloudy scenes
 are skipped. The dashboard automatically requests a new scan every ten
 minutes, subject to provider rate limits.
@@ -149,6 +155,10 @@ The complete endpoint reference is in
 | GET | `/api/model` | Inspect loaded model status and metrics |
 | GET | `/api/scans` | Read persisted scan history |
 | GET | `/api/live-detect` | Acquire and analyze public Sentinel-2 scenes |
+| GET | `/api/sites` | List saved custom monitoring polygons |
+| POST | `/api/sites` | Create a monitoring site from GeoJSON |
+| POST | `/api/sites/import` | Import a KML or GeoJSON monitoring site |
+| POST | `/api/sites/{site_id}/scan` | Acquire and analyze scenes clipped to a site |
 | POST | `/api/detect` | Analyze an uploaded historical/recent image pair |
 | POST | `/api/train` | Start training when explicitly enabled |
 | GET | `/api/train` | Read current training status |
@@ -204,10 +214,11 @@ CORS_ORIGINS=https://geosentinel-ui.onrender.com
 ```
 
 The dashboard's **TRAIN CNN** button calls `/api/train`. The included Render
-Blueprint enables this endpoint for the hackathon. Training runs from the
-committed dataset and reloads the model when complete. For a public production
-deployment, set `TRAINING_ENABLED=false` and retrain from an authorized
-environment because this endpoint has no authentication layer.
+Blueprint enables this endpoint for the hackathon. Training requires prepared
+OSCD patches under `backend/data/oscd/`; the dataset is not committed, so a
+deployment must provision it before training. The model reloads when training
+completes. For a public production deployment, set `TRAINING_ENABLED=false`
+because this endpoint has no authentication layer.
 
 Local origins remain enabled for development. Do not use `*` with credentials.
 Set the frontend build environment variable `NEXT_PUBLIC_API_URL` to the
