@@ -226,6 +226,7 @@ export default function Home() {
           </div>
         </div>
         <div className="top-actions">
+          <a className="dashboard-home-link" href="/">Overview</a>
           <span className="live-dot" /> {waitingForDashboard || liveScanning ? "SCANNING SATELLITE FEED" : "SYSTEM OPERATIONAL"}
           <button className="live-button" onClick={runLiveScan} disabled={waitingForDashboard || liveScanning}>
             <Waves size={15} /> {waitingForDashboard || liveScanning ? "SCANNING..." : "LIVE SATELLITE SCAN"}

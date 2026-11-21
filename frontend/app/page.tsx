@@ -1,147 +1,60 @@
 "use client";
 
-import { useState } from "react";
-import { ArrowRight, Crosshair, LockKeyhole, Mail, MapPin, Satellite } from "lucide-react";
 import Link from "next/link";
+import { ArrowRight, ArrowUpRight, Crosshair, Waves } from "lucide-react";
+import { motion, useReducedMotion } from "motion/react";
+import SatelliteComparePreview from "./components/SatelliteComparePreview";
 
-type AuthMode = "login" | "signup";
-
-export default function Home() {
-  const [mode, setMode] = useState<AuthMode>("login");
-  const [notice, setNotice] = useState("");
-
-  function changeMode(nextMode: AuthMode) {
-    setMode(nextMode);
-    setNotice("");
-  }
-
-  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setNotice("Account access is not connected yet. Your credentials were not sent or stored.");
-  }
+export default function HomePage() {
+  const prefersReducedMotion = useReducedMotion();
 
   return (
-    <main className="auth-page">
-      <div className="auth-shell">
-        <header className="auth-header">
-          <Link className="auth-brand" href="/" aria-label="GeoSentinel home">
-            <span className="auth-brand-mark"><Crosshair size={19} /></span>
-            <span>
-              <strong>GEOSENTINEL</strong>
-              <small>LAND CHANGE INTELLIGENCE</small>
-            </span>
-          </Link>
-          <Link className="auth-demo-link" href="/dashboard">
-            VIEW LIVE DEMO <ArrowRight size={14} />
-          </Link>
-        </header>
+    <main className="landing-shell">
+      <header className="landing-header">
+        <Link className="landing-brand" href="/" aria-label="GeoSentinel home">
+          <span className="brand-mark"><Crosshair size={19} /></span>
+          <span className="landing-brand-copy"><strong>GeoSentinel AI</strong><small>Monitoring command center</small></span>
+        </Link>
+        <Link className="landing-nav-link" href="/dashboard">Open predictions <ArrowUpRight size={15} /></Link>
+      </header>
 
-        <div className="auth-layout">
-          <section className="auth-intro">
-            <span className="auth-kicker"><span /> SATELLITE MONITORING FOR YOUR LAND</span>
-            <h1>Know what’s changing on the ground.</h1>
-            <p className="auth-intro-copy">
-              Track land-surface changes with satellite imagery and keep clear, dated evidence in one place.
-            </p>
-
-            <div className="auth-benefits">
-              <div>
-                <span className="auth-benefit-icon"><Satellite size={17} /></span>
-                <p><strong>Consistent observation</strong><small>Sentinel-2 imagery revisits approximately every five days.</small></p>
-              </div>
-              <div>
-                <span className="auth-benefit-icon"><MapPin size={17} /></span>
-                <p><strong>Changes with context</strong><small>Review mapped findings, dates, and estimated affected area.</small></p>
-              </div>
-              <div>
-                <span className="auth-benefit-icon"><Crosshair size={17} /></span>
-                <p><strong>Evidence to verify</strong><small>Use satellite signals to guide review, not as a legal determination.</small></p>
-              </div>
-            </div>
-
-            <div className="auth-footnote">
-              <span className="auth-footnote-line" />
-              <span>PUBLIC SATELLITE DATA <b>·</b> HUMAN REVIEW REQUIRED</span>
-            </div>
-          </section>
-
-          <section className="auth-card" aria-labelledby="auth-title">
-            <div className="auth-card-heading">
-              <span className="auth-card-kicker">YOUR MONITORING WORKSPACE</span>
-              <h2 id="auth-title">{mode === "login" ? "Welcome back" : "Create your account"}</h2>
-              <p>{mode === "login" ? "Sign in to continue to your sites." : "Start monitoring the land that matters to you."}</p>
-            </div>
-
-            <div className="auth-tabs" role="group" aria-label="Choose sign-in or sign-up">
-              <button
-                type="button"
-                aria-pressed={mode === "login"}
-                className={mode === "login" ? "active" : ""}
-                onClick={() => changeMode("login")}
-              >
-                Sign in
-              </button>
-              <button
-                type="button"
-                aria-pressed={mode === "signup"}
-                className={mode === "signup" ? "active" : ""}
-                onClick={() => changeMode("signup")}
-              >
-                Sign up
-              </button>
-            </div>
-
-            <form className="auth-form" onSubmit={handleSubmit}>
-              {mode === "signup" && (
-                <label>
-                  <span>FULL NAME</span>
-                  <input name="name" type="text" autoComplete="name" placeholder="Your name" required />
-                </label>
-              )}
-              <label>
-                <span>EMAIL ADDRESS</span>
-                <span className="auth-input-wrap">
-                  <Mail size={16} aria-hidden="true" />
-                  <input name="email" type="email" autoComplete="email" placeholder="you@example.com" required />
-                </span>
-              </label>
-              <label>
-                <span>PASSWORD</span>
-                <span className="auth-input-wrap">
-                  <LockKeyhole size={16} aria-hidden="true" />
-                  <input
-                    name="password"
-                    type="password"
-                    autoComplete={mode === "login" ? "current-password" : "new-password"}
-                    placeholder="At least 8 characters"
-                    minLength={8}
-                    required
-                  />
-                </span>
-              </label>
-
-              {notice && <p className="auth-notice" role="status">{notice}</p>}
-
-              <button className="auth-submit" type="submit">
-                {mode === "login" ? "SIGN IN" : "CREATE ACCOUNT"} <ArrowRight size={16} />
-              </button>
-            </form>
-
-            <p className="auth-setup-note">
-              Account authentication is not configured in this MVP. Form details are not sent or saved.
-            </p>
-            <div className="auth-divider"><span>OR</span></div>
-            <Link className="auth-dashboard-link" href="/dashboard">
-              Explore the live dashboard <ArrowRight size={15} />
-            </Link>
-          </section>
+      <motion.section
+        className="hero landing-hero"
+        initial={prefersReducedMotion ? false : { opacity: 0, y: 14 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+      >
+        <div className="hero-message">
+          <p className="eyebrow">The change sentinel / T8.1</p>
+          <h1>From satellite pixels<br /><em>to actionable intelligence.</em></h1>
+          <p className="hero-copy">Detecting suspicious land-use change before it disappears into the landscape.</p>
+          <div className="landing-actions">
+            <Link className="landing-primary" href="/dashboard">View all predictions <ArrowRight size={16} /></Link>
+            <a className="landing-secondary" href="#comparison">See scene comparison</a>
+          </div>
         </div>
+        <div className="landing-window">
+          <Waves size={16} />
+          <span>Monitoring window</span>
+          <strong>Historical <b>to</b> recent</strong>
+          <small>Sentinel-2 scene pair</small>
+        </div>
+      </motion.section>
 
-        <footer className="auth-footer">
-          <span>GEOSENTINEL AI</span>
-          <span>Automated land-change signals require field verification.</span>
-        </footer>
-      </div>
+      <section className="landing-meta" aria-label="Monitoring setup">
+        <div><span>Region</span><strong>Pune quarry belt</strong></div>
+        <div><span>Sensor</span><strong>Sentinel-2 / 10 m</strong></div>
+        <div><span>Detection mode</span><strong>ChangeCNN + differencing</strong></div>
+        <div><span>Auto monitoring</span><strong>Every 10 minutes</strong></div>
+        <Link href="/dashboard">Dashboard <ArrowUpRight size={14} /></Link>
+      </section>
+
+      <SatelliteComparePreview />
+
+      <footer className="landing-footer">
+        <span>GeoSentinel / Pune region</span>
+        <span>Detection is an intelligence signal; verify field conditions before enforcement.</span>
+      </footer>
     </main>
   );
 }
