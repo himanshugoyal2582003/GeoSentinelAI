@@ -27,7 +27,9 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:3000`.
+Open `http://localhost:3000` for the sign-in/sign-up UI preview. Authentication
+is not connected in this MVP; open `http://localhost:3000/dashboard` to use the
+live dashboard.
 
 ## Render deployment
 

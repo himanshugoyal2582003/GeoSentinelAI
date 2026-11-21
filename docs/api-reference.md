@@ -23,14 +23,21 @@ Returns whether `change_cnn.pt` loaded and the contents of
 
 ## `GET /api/scans`
 
-Returns the newest stored scan rows from `backend/data/scans.csv`.
+Returns newest stored scan rows from Neo4j, falling back to
+`backend/data/scans.csv` when Neo4j is unavailable. Supports `limit` (1-200),
+`offset` (0 or greater), and optional `region_id`.
 
 ```json
-{ "scans": [{ "scan_id": "scan-...", "changed_area_sqm": "1234" }] }
+{
+  "scans": [{ "scan_id": "scan-...", "changed_area_sqm": "1234" }],
+  "total": 1,
+  "limit": 50,
+  "offset": 0
+}
 ```
 
-CSV values are returned as strings because this endpoint exposes persisted
-records.
+Fallback CSV values are returned as strings because this endpoint exposes
+persisted records.
 
 ## `GET /api/live-detect`
 
@@ -40,15 +47,15 @@ Acquires and analyzes public scenes for the fixed Pune bounding box.
 
 | Field | Meaning |
 |---|---|
-| `scanId` | CSV persistence identifier for a successful scan |
+| `scanId` | Persistence identifier for a successful scan (Neo4j, with CSV fallback) |
 | `region` | Monitoring region name |
 | `historicalDate` / `recentDate` | Dates of the primary comparison pair |
 | `findings` | Detected connected components |
 | `summary` | Area, hectares, high-risk count, average confidence |
 | `timeline` | Adjacent scene-pair area measurements |
 | `areaBreakdown` | Finding-level area list |
-| `processing` | Threshold, masking, alignment, model metadata |
-| `source` | Provider, scene dates, cloud cover, media URLs, cadence |
+| `processing` | Reflectance bands/indices, threshold, SCL masking, alignment, and model metadata |
+| `source` | Provider, scene dates, cloud cover, 10 m COG resolution, media URLs, cadence |
 
 `source.stale` is `true` when the response is a cached real result. A fresh
 successful response does not set this flag.

@@ -35,7 +35,8 @@ The current implementation uses:
    latitude.
 2. Microsoft Planetary Computer's public Sentinel-2 L2A STAC catalog.
 3. Up to eight newest scenes with catalog cloud cover below 20%.
-4. Rendered RGB preview assets rather than analysis-ready multispectral bands.
+4. Native B02, B03, B04, B08, B11, and SCL COG windows resampled to a common
+   10 m UTM grid; RGB previews are retained only for dashboard display.
 5. Cloud-brightness masking, seasonal percentile normalization, FFT alignment,
    pixel differencing, connected components, and an optional six-channel CNN.
 6. CSV files for scan and finding history.

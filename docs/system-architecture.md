@@ -4,9 +4,10 @@
 
 GeoSentinel AI has two runtime applications:
 
-- **Frontend:** Next.js dashboard served to a browser.
+- **Frontend:** Next.js sign-in/sign-up preview and dashboard served to a
+  browser. Authentication is not connected in this MVP.
 - **Backend:** FastAPI service that acquires public imagery, performs analysis,
-  stores CSV history, and serves media and JSON results.
+  persists scans to Neo4j with CSV fallback, and serves media and JSON results.
 
 External services are public or browser-facing:
 
@@ -20,9 +21,10 @@ flowchart LR
     Browser[Next.js dashboard] -->|JSON/CORS| API[FastAPI backend]
     Browser -->|Map tiles| OSM[OpenStreetMap]
     Browser -->|Open links| Google[Google Maps / Satellite]
-    API -->|STAC search + signed previews| MPC[Microsoft Planetary Computer]
+    API -->|STAC search + signed COG windows| MPC[Microsoft Planetary Computer]
     API -->|Reverse geocode| Nominatim[Nominatim]
-    API -->|Read/write| Files[(PNG cache + CSV history + model)]
+    API -->|Read/write| Files[(PNG cache + CSV fallback + model)]
+    API -->|Graph persistence| Neo4j[(Neo4j)]
 ```
 
 ## Repository structure
@@ -30,15 +32,17 @@ flowchart LR
 ```text
 backend/
   app/main.py              FastAPI routes and image-processing pipeline
+  app/satellite_cog.py     Windowed Sentinel-2 COG reads and raster georeferencing
   app/change_model.py      ChangeCNN definition and model loading
-  app/history.py           CSV scan/finding persistence
+  app/history.py           CSV scan/finding fallback persistence
   train_model.py           Dataset loading, labeling, training, metrics
   models/                  change_cnn.pt and metrics.json
   data/                    scans.csv, findings.csv, live cache/media
 dataset/
   public-sentinel2-pune/   Real preview pair, manifest, labels.csv
 frontend/
-  app/page.tsx             Dashboard, scan actions, map, reports
+  app/page.tsx             Sign-in/sign-up UI preview (no auth backend)
+  app/dashboard/page.tsx   Dashboard, scan actions, map, reports
   app/globals.css          Dashboard styling
   app/layout.tsx           Metadata and shell
 render.yaml                Render backend service definition
@@ -50,20 +54,24 @@ render.yaml                Render backend service definition
 
 `_live_scenes()` posts a STAC search for the static bounding box, filters
 scenes with `eo:cloud_cover < 20`, sorts by acquisition time, and retains the
-newest eight. `_signed_preview()` signs each `rendered_preview` asset and
-downloads it with retry/backoff for HTTP 429 responses.
+newest eight. `read_sentinel2_scene()` signs and window-reads each B02, B03,
+B04, B08, B11, and SCL COG asset, resampling into one 10 m UTM grid. Assets
+with no valid pixels in the requested region are rejected.
 
 ### Analysis
 
 `_analyse_pair()` performs the following sequence:
 
-1. Per-channel 5th/95th percentile normalization.
-2. FFT phase-correlation alignment.
-3. Bright, low-colour-spread cloud masking.
-4. Mean absolute RGB difference.
-5. Threshold at the greater of 25 or the 90th percentile difference.
+1. Make RGB display previews and align scene pairs with FFT phase correlation.
+2. Derive NDVI and Bare Soil Index (BSI) from scaled reflectance bands.
+3. Mask SCL no-data, shadow, unclassified, cloud, cirrus, and snow classes.
+4. Flag NDVI loss or BSI gain above the configured minimum/90th-percentile
+   change threshold.
+5. Estimate component coordinates from the UTM raster transform; use the
+   existing CNN as an additional score.
 6. Connected-component extraction with a minimum component size.
-7. Area, confidence, severity, coordinates, bounding box, and map links.
+7. Area, confidence, severity, coordinates, bounding box, and map links from
+   the georeferenced raster grid.
 8. Optional `ChangeCNN` score blended into confidence.
 
 The latest pair supplies the main findings. Adjacent pairs supply timeline
@@ -71,12 +79,13 @@ points. At most ten components are returned per pair.
 
 ### Persistence
 
-Successful scans append records to:
+Successful scans are written transactionally to Neo4j. If graph persistence
+fails, records are written to the CSV fallback:
 
 - `backend/data/scans.csv`
 - `backend/data/findings.csv`
 
-The latest result and two displayed images are written under
+The latest result and two display-preview images are written under
 `backend/data/live/`. If the provider rate-limits or another acquisition error
 occurs, `last-result.json` is returned with `source.stale: true` when available.
 

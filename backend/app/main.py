@@ -7,11 +7,9 @@ import os
 import subprocess
 import sys
 import threading
-import time
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError
-from urllib.parse import quote
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
@@ -40,6 +38,16 @@ from .services.detection_service import (
     validate_pixel_size,
 )
 from .services.persistence_service import persist_scan
+from .satellite_cog import (
+    RasterGrid,
+    Sentinel2Raster,
+    create_target_grid,
+    pixel_bounds_wgs84,
+    pixel_center_wgs84,
+    read_sentinel2_scene,
+    rgb_preview,
+)
+from .spectral import SpectralChange, compare_spectral_scenes
 
 logger = logging.getLogger(__name__)
 
@@ -190,27 +198,52 @@ def _analyse_pair(
     mode: str,
     historical_date: str,
     recent_date: str,
+    *,
+    spectral_change: SpectralChange | None = None,
+    raster_grid: RasterGrid | None = None,
+    alignment_shift: tuple[float, float] | None = None,
 ) -> dict[str, Any]:
     new_image = _normalize_season(new_image, old_image)
-    aligned_image, shift = _align_image(old_image, new_image)
-    cloud_mask = _cloud_mask(old_image) | _cloud_mask(aligned_image)
-    difference = np.mean(np.abs(aligned_image - old_image), axis=2)
-    threshold = max(25.0, float(np.percentile(difference, 90)))
-    mask = (difference >= threshold) & ~cloud_mask
+    if alignment_shift is None:
+        aligned_image, shift = _align_image(old_image, new_image)
+    else:
+        shift_x, shift_y = (int(round(alignment_shift[0])), int(round(alignment_shift[1])))
+        aligned_image = np.roll(new_image, (shift_y, shift_x), axis=(0, 1))
+        shift = alignment_shift
+    if spectral_change is None:
+        cloud_mask = _cloud_mask(old_image) | _cloud_mask(aligned_image)
+        difference = np.mean(np.abs(aligned_image - old_image), axis=2)
+        threshold = max(25.0, float(np.percentile(difference, 90)))
+        mask = (difference >= threshold) & ~cloud_mask
+    else:
+        cloud_mask = spectral_change.cloud_mask
+        difference = spectral_change.score
+        threshold = spectral_change.threshold
+        mask = spectral_change.mask & ~cloud_mask
     components = _components(mask)
     findings = []
     height, width = mask.shape
     for index, (x, y, component_width, component_height, pixels) in enumerate(components[:10], start=1):
         area_sqm = round(pixels * pixel_size_m * pixel_size_m)
-        center_lat = latitude + ((y + component_height / 2) / height - 0.5) * 0.08
-        center_lon = longitude + ((x + component_width / 2) / width - 0.5) * 0.08
-        region_bbox = [
-            round(latitude + (y / height - 0.5) * 0.08, 6),
-            round(longitude + (x / width - 0.5) * 0.08, 6),
-            round(latitude + ((y + component_height) / height - 0.5) * 0.08, 6),
-            round(longitude + ((x + component_width) / width - 0.5) * 0.08, 6),
-        ]
-        confidence = min(0.98, 0.65 + difference[y : y + component_height, x : x + component_width].mean() / 255)
+        if raster_grid is None:
+            center_lat = latitude + ((y + component_height / 2) / height - 0.5) * 0.08
+            center_lon = longitude + ((x + component_width / 2) / width - 0.5) * 0.08
+            region_bbox = [
+                round(latitude + (y / height - 0.5) * 0.08, 6),
+                round(longitude + (x / width - 0.5) * 0.08, 6),
+                round(latitude + ((y + component_height) / height - 0.5) * 0.08, 6),
+                round(longitude + ((x + component_width) / width - 0.5) * 0.08, 6),
+            ]
+        else:
+            center_lat, center_lon = pixel_center_wgs84(
+                raster_grid,
+                x + component_width / 2,
+                y + component_height / 2,
+            )
+            region_bbox = pixel_bounds_wgs84(raster_grid, x, y, component_width, component_height)
+        component_signal = difference[y : y + component_height, x : x + component_width].mean()
+        confidence_scale = 0.25 if spectral_change is not None else 1 / 255
+        confidence = min(0.98, 0.65 + float(component_signal) * confidence_scale)
         model_score = None
         if CHANGE_MODEL:
             patch_x = max(0, min(width - 32, x + component_width // 2 - 16))
@@ -223,6 +256,16 @@ def _analyse_pair(
             with torch.no_grad():
                 model_score = float(torch.sigmoid(CHANGE_MODEL(torch.from_numpy(patch.astype(np.float32))[None]))[0])
             confidence = round((confidence + model_score) / 2, 3)
+        if spectral_change is None:
+            change_type = "Spectral surface change"
+        else:
+            component_ndvi_loss = spectral_change.ndvi_loss[
+                y : y + component_height, x : x + component_width
+            ].mean()
+            component_bsi_gain = spectral_change.bsi_gain[
+                y : y + component_height, x : x + component_width
+            ].mean()
+            change_type = "Vegetation loss" if component_ndvi_loss >= component_bsi_gain else "Bare-soil exposure"
         detection_error_sqm = max(
             round(pixel_size_m * pixel_size_m),
             round(area_sqm * min(0.35, 1 - confidence)),
@@ -243,7 +286,7 @@ def _analyse_pair(
                     "https://www.google.com/maps/@?api=1&map_action=map"
                     f"&center={google_query}&zoom=17&basemap=satellite"
                 ),
-                "changeType": "Spectral surface change",
+                "changeType": change_type,
                 "firstObserved": historical_date,
                 "lastObserved": recent_date,
                 "status": "Needs review",
@@ -251,6 +294,20 @@ def _analyse_pair(
             }
         )
     total_area = sum(item["areaSqm"] for item in findings)
+    processing = {
+        "threshold": round(threshold, 4 if spectral_change is not None else 2),
+        "components": len(findings),
+        "model": "ChangeCNN" if CHANGE_MODEL else "difference-fallback",
+        "cloudMaskPixels": int(cloud_mask.sum()),
+        "alignmentShiftPixels": [round(shift[0], 3), round(shift[1], 3)],
+        "seasonalNormalization": "per-channel percentile matching",
+    }
+    if spectral_change is not None:
+        processing.update({
+            "reflectanceBands": ["B02", "B03", "B04", "B08", "B11"],
+            "spectralIndices": ["NDVI", "BSI"],
+            "changeSignal": "NDVI loss or BSI gain",
+        })
     return {
         "mode": mode,
         "region": "Pune quarry belt",
@@ -276,14 +333,7 @@ def _analyse_pair(
             "Two-date trajectory: the historical scene is the baseline and the recent scene "
             "contains the measured changed area. Additional scenes are required for a multi-point trend."
         ),
-        "processing": {
-            "threshold": round(threshold, 2),
-            "components": len(findings),
-            "model": "ChangeCNN" if CHANGE_MODEL else "difference-fallback",
-            "cloudMaskPixels": int(cloud_mask.sum()),
-            "alignmentShiftPixels": [round(shift[0], 3), round(shift[1], 3)],
-            "seasonalNormalization": "per-channel percentile matching",
-        },
+        "processing": processing,
     }
 
 
@@ -317,19 +367,6 @@ def _align_image(reference: np.ndarray, moving: np.ndarray) -> tuple[np.ndarray,
     shift_x = float(peak_x if peak_x <= width // 2 else peak_x - width)
     aligned = np.roll(moving, (int(round(shift_y)), int(round(shift_x))), axis=(0, 1))
     return aligned, (shift_x, shift_y)
-
-
-def _download_bytes(url: str) -> bytes:
-    request = Request(url, headers={"User-Agent": "GeoSentinel-MVP/1.0"})
-    for attempt in range(3):
-        try:
-            with urlopen(request, timeout=90) as response:
-                return response.read()
-        except HTTPError as exc:
-            if exc.code != 429 or attempt == 2:
-                raise
-            time.sleep(2 ** attempt)
-    raise RuntimeError("Satellite download retry limit reached")
 
 
 def _read_live_cache() -> dict[str, Any] | None:
@@ -369,21 +406,6 @@ def _live_scenes() -> list[dict[str, Any]]:
     return scenes[-MAX_TIMELINE_SCENES:]
 
 
-def _signed_preview(item: dict[str, Any]) -> bytes:
-    href = item["assets"]["rendered_preview"]["href"]
-    sign_url = "https://planetarycomputer.microsoft.com/api/sas/v1/sign?href=" + quote(href, safe="")
-    for attempt in range(3):
-        try:
-            with urlopen(Request(sign_url, headers={"User-Agent": "GeoSentinel-MVP/1.0"}), timeout=30) as response:
-                signed = json.loads(response.read())["href"]
-            return _download_bytes(signed)
-        except HTTPError as exc:
-            if exc.code != 429 or attempt == 2:
-                raise
-            time.sleep(2 ** attempt)
-    raise RuntimeError("Satellite signing retry limit reached")
-
-
 def _area_name(latitude: float, longitude: float) -> str:
     fallback = f"Pune monitoring area ({latitude:.5f}, {longitude:.5f})"
     try:
@@ -416,44 +438,83 @@ def _add_area_names(findings: list[dict[str, Any]]) -> None:
         finding["areaName"] = _area_name(latitude, longitude)
 
 
+def _analyse_scene_pair(
+    historical: Sentinel2Raster,
+    recent: Sentinel2Raster,
+    historical_date: str,
+    recent_date: str,
+    mode: str,
+) -> dict[str, Any]:
+    old_image = rgb_preview(historical.bands).astype(np.float32)
+    new_image = rgb_preview(recent.bands).astype(np.float32)
+    _, shift = _align_image(old_image, new_image)
+    spectral_change = compare_spectral_scenes(
+        historical.bands,
+        recent.bands,
+        historical.scl,
+        recent.scl,
+        shift,
+    )
+    return _analyse_pair(
+        old_image,
+        new_image,
+        (STATIC_BBOX[1] + STATIC_BBOX[3]) / 2,
+        (STATIC_BBOX[0] + STATIC_BBOX[2]) / 2,
+        recent.grid.resolution_m,
+        mode,
+        historical_date,
+        recent_date,
+        spectral_change=spectral_change,
+        raster_grid=recent.grid,
+        alignment_shift=shift,
+    )
+
+
 def _execute_live_detect(idempotency_key: str | None = None) -> dict[str, Any]:
     """Internal implementation of live detection."""
     try:
         scenes = _live_scenes()
-        image_bytes = {scene["id"]: _signed_preview(scene) for scene in scenes}
+        grid = create_target_grid(STATIC_BBOX, resolution_m=10)
+        first_raster = None
+        previous_raster = None
+        previous_scene = None
+        timeline = []
+        for scene in scenes:
+            current_raster = read_sentinel2_scene(scene, STATIC_BBOX, grid)
+            if first_raster is None:
+                first_raster = current_raster
+            if previous_raster is not None and previous_scene is not None:
+                pair_result = _analyse_scene_pair(
+                    previous_raster,
+                    current_raster,
+                    previous_scene["properties"]["datetime"][:10],
+                    scene["properties"]["datetime"][:10],
+                    "timeline",
+                )
+                timeline.append({
+                    "month": scene["properties"]["datetime"][:10],
+                    "areaSqm": pair_result["summary"]["changedAreaSqm"],
+                })
+            previous_raster = current_raster
+            previous_scene = scene
+
+        if first_raster is None or previous_raster is None:
+            raise RuntimeError("The Sentinel-2 catalog returned no readable scenes.")
         historical, recent = scenes[0], scenes[-1]
-        historical_bytes = image_bytes[historical["id"]]
-        recent_bytes = image_bytes[recent["id"]]
+        old_image = rgb_preview(first_raster.bands)
+        new_image = rgb_preview(previous_raster.bands)
         historical_path = MEDIA_DIR / "historical-live.png"
         recent_path = MEDIA_DIR / "recent-live.png"
-        historical_path.write_bytes(historical_bytes)
-        recent_path.write_bytes(recent_bytes)
-        old_image = np.asarray(Image.open(io.BytesIO(historical_bytes)).convert("RGB"), dtype=np.float32)
-        new_image = np.asarray(Image.open(io.BytesIO(recent_bytes)).convert("RGB"), dtype=np.float32)
-        result = _analyse_pair(
-            old_image,
-            new_image,
-            (STATIC_BBOX[1] + STATIC_BBOX[3]) / 2,
-            (STATIC_BBOX[0] + STATIC_BBOX[2]) / 2,
-            10,
-            "live-sentinel2",
+        Image.fromarray(old_image).save(historical_path, format="PNG")
+        Image.fromarray(new_image).save(recent_path, format="PNG")
+        result = _analyse_scene_pair(
+            first_raster,
+            previous_raster,
             historical["properties"]["datetime"][:10],
             recent["properties"]["datetime"][:10],
+            "live-sentinel2",
         )
         _add_area_names(result["findings"])
-        timeline = []
-        for previous, current in zip(scenes, scenes[1:]):
-            pair_result = _analyse_pair(
-                np.asarray(Image.open(io.BytesIO(image_bytes[previous["id"]])).convert("RGB"), dtype=np.float32),
-                np.asarray(Image.open(io.BytesIO(image_bytes[current["id"]])).convert("RGB"), dtype=np.float32),
-                (STATIC_BBOX[1] + STATIC_BBOX[3]) / 2,
-                (STATIC_BBOX[0] + STATIC_BBOX[2]) / 2,
-                10,
-                "timeline",
-                previous["properties"]["datetime"][:10],
-                current["properties"]["datetime"][:10],
-            )
-            timeline.append({"month": current["properties"]["datetime"][:10], "areaSqm": pair_result["summary"]["changedAreaSqm"]})
         result["timeline"] = [{"month": historical["properties"]["datetime"][:10], "areaSqm": 0}] + timeline
         result["timelineNote"] = (
             f"Multi-scene trajectory from up to {MAX_TIMELINE_SCENES} newest low-cloud observations. "
@@ -467,6 +528,9 @@ def _execute_live_detect(idempotency_key: str | None = None) -> dict[str, Any]:
             "recentItem": recent["id"],
             "historicalCloudCover": historical["properties"].get("eo:cloud_cover"),
             "recentCloudCover": recent["properties"].get("eo:cloud_cover"),
+            "assetType": "Native Sentinel-2 L2A COG",
+            "bands": ["B02", "B03", "B04", "B08", "B11", "SCL"],
+            "resolutionMeters": grid.resolution_m,
             "historicalImage": "/media/historical-live.png",
             "recentImage": "/media/recent-live.png",
             "sceneCount": len(scenes),

@@ -6,6 +6,7 @@ GeoSentinel is a hackathon MVP for monitoring suspicious quarry expansion from h
 
 - FastAPI backend with:
   - public Sentinel-2 L2A scene acquisition for the Pune monitoring region;
+  - native 10 m COG band reads, NDVI/BSI change signals, and SCL cloud masking;
   - upload-based image differencing using Pillow and NumPy;
   - connected-component extraction, area estimation, severity scoring, and case-file generation;
   - retry and cached-real-feed handling when the public provider rate-limits requests.
@@ -84,7 +85,7 @@ Long-term monitoring now includes:
 - catalog cloud-cover filtering plus bright-cloud pixel masking;
 - FFT phase-correlation image alignment;
 - per-channel seasonal/brightness normalization;
-- CSV history in `backend/data/scans.csv` and `backend/data/findings.csv`;
+- Neo4j scan/finding persistence with CSV fallback in `backend/data/`;
 - `GET /api/scans` for stored scan history and finding tracking.
 
 ### Train first, then scan the static satellite location
@@ -103,10 +104,13 @@ Then either click **LIVE SATELLITE SCAN** in the dashboard or call:
 Invoke-RestMethod http://localhost:8000/api/live-detect
 ```
 
-`/api/live-detect` fetches up to eight newest low-cloud Sentinel-2 L2A rendered
-previews from the public Planetary Computer catalog for the static Pune
-bounding box, saves the historical/recent comparison images under
-`/media/`, runs `ChangeCNN`, and returns findings with estimated coordinates.
+`/api/live-detect` fetches up to eight newest low-cloud Sentinel-2 L2A scenes
+from the public Planetary Computer catalog for the static Pune bounding box.
+It reads the B02, B03, B04, B08, B11, and SCL COG windows, aligns reflectance
+data to a common 10 m UTM grid, and uses NDVI loss, BSI gain, and SCL masking
+for change signals. RGB images saved under `/media/` are display previews only.
+The existing `ChangeCNN` supplies an additional score, and findings include
+georeferenced coordinates.
 Sentinel-2 revisits the region approximately every five days; cloudy scenes
 are skipped. The dashboard automatically requests a new scan every ten
 minutes, subject to provider rate limits.
@@ -119,7 +123,10 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000. The frontend expects the API at `http://localhost:8000`; set `NEXT_PUBLIC_API_URL` to override it.
+Open http://localhost:3000 for the sign-in/sign-up UI preview. Authentication is
+not connected in this MVP; use **View Live Demo** to open the dashboard at
+http://localhost:3000/dashboard. The frontend expects the API at
+`http://localhost:8000`; set `NEXT_PUBLIC_API_URL` to override it.
 
 ### Verify the setup
 
@@ -129,7 +136,7 @@ With both services running, check the backend:
 Invoke-RestMethod http://localhost:8000/api/health
 ```
 
-Then open http://localhost:3000 and select **LIVE SATELLITE SCAN**.
+Then open http://localhost:3000/dashboard and select **LIVE SATELLITE SCAN**.
 
 ## API documentation
 

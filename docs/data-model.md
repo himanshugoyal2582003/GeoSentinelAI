@@ -26,13 +26,15 @@ A finding is a connected changed component from one image pair. Its area is:
 areaSqm = changed_pixel_count × pixel_size_m × pixel_size_m
 ```
 
-Coordinates are estimated by mapping preview pixels into the static bounding
-box. They are suitable for review and map navigation, not survey-grade
-measurement.
+For live Sentinel-2 analysis, coordinates and bounding boxes are derived from
+the 10 m UTM raster transform and converted to WGS-84. Uploaded image-pair
+coordinates are estimated from the configured region and image pixels. Both
+are suitable for review and map navigation, not survey-grade measurement.
 
 ## CSV scan history
 
-`backend/data/scans.csv` stores:
+Neo4j is the primary store for successful scan and finding observations.
+`backend/data/scans.csv` is the fallback and stores:
 
 - scan ID and UTC creation time;
 - region and primary observation dates;
@@ -45,7 +47,7 @@ measurement.
 
 ## CSV finding history
 
-`backend/data/findings.csv` stores:
+`backend/data/findings.csv` is the corresponding finding fallback and stores:
 
 - scan and finding IDs;
 - reverse-geocoded area name;
@@ -58,11 +60,13 @@ measurement.
 
 `dataset/public-sentinel2-pune/` contains:
 
-- `historical.png` and `recent.png`: real rendered Sentinel-2 previews;
+- `historical.png` and `recent.png`: contrast-stretched RGB display previews
+  generated from the native Sentinel-2 COG bands;
 - `manifest.json`: scene IDs, dates, cloud cover, source, and bbox;
 - `labels.csv`: optional expert patch labels.
 
-The preview images are not analysis-ready multispectral GeoTIFF bands.
+Live analysis reads the B02, B03, B04, B08, B11, and SCL COG assets directly.
+The saved PNGs are for display only and are not used as analysis inputs.
 
 ## Cache and durability
 
@@ -101,17 +105,16 @@ queryable store.
 ### Spatial points (WGS-84)
 
 `FindingObservation.location` is stored as a Neo4j `point` using WGS-84
-coordinates:
+coordinates. Live scan coordinates are derived from the native raster grid;
+uploaded-image coordinates are estimated from the configured region:
 
 ```cypher
 point({longitude: <lon>, latitude: <lat>, srid: 4326})
 ```
 
 Neo4j uses `longitude` as the X axis and `latitude` as the Y axis. Coordinates
-come from the centroid of the detected changed-pixel bounding box, converted
-from preview-pixel space to geographic space using the monitoring region's
-bounding box. These are estimates suitable for map display, not survey-grade
-measurements.
+come from the centroid of the detected changed-pixel bounding box. They are
+estimates suitable for map display, not survey-grade measurements.
 
 A spatial index on `FindingObservation.location` supports `point.distance()`
 proximity queries.
