@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel, Field
 
 from app.db.neo4j import get_driver
@@ -142,7 +142,12 @@ def get_site(site_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail="Monitoring site storage is unavailable.") from exc
 
 
-@router.delete("/{site_id}", status_code=204)
+@router.delete(
+    "/{site_id}",
+    status_code=204,
+    response_class=Response,
+    response_model=None,
+)
 def delete_site(site_id: str) -> None:
     try:
         with get_driver().session() as session:

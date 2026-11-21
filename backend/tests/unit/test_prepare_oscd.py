@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 import rasterio
 from PIL import Image
 from rasterio.transform import from_origin
@@ -87,6 +88,23 @@ def test_prepare_dataset_uses_only_official_train_cities_and_reads_separate_mask
     assert validation_features.shape == (2, MODEL_INPUT_CHANNELS, 32, 32)
     assert validation_labels.tolist() == [0, 1]
     assert json.loads((output_root / "manifest.json").read_text(encoding="utf-8")) == manifest
+
+
+def test_prepare_dataset_rejects_missing_city_labels_before_writing_patches(tmp_path: Path) -> None:
+    images_root = tmp_path / "images"
+    labels_root = tmp_path / "train-labels"
+    images_root.mkdir()
+    labels_root.mkdir()
+    (images_root / "train.txt").write_text("bordeaux,paris", encoding="utf-8")
+    (images_root / "bordeaux").mkdir()
+    (images_root / "paris").mkdir()
+    (labels_root / "paris").mkdir()
+    output_root = tmp_path / "prepared"
+
+    with pytest.raises(FileNotFoundError, match="bordeaux"):
+        prepare_dataset(images_root, labels_root, output_root)
+
+    assert not output_root.exists()
 
 
 def test_official_tiff_mask_uses_class_two_as_change(tmp_path: Path) -> None:

@@ -19,7 +19,7 @@ Run the checks relevant to your change:
 
 ```powershell
 # Backend syntax check
-python -m compileall backend\app backend\train_model.py
+backend\.venv\Scripts\python.exe -m compileall backend\app backend\train_model.py
 
 # Frontend production build
 cd frontend

@@ -65,7 +65,8 @@ GeoSentinelAI integrates with Neo4j (AuraDB or local instance) for transactional
 
 ### Prerequisites
 
-- Python 3.10 or newer
+- Python 3.10 or newer; Python 3.13 is recommended on Windows for the pinned
+  binary dependencies (Python 3.14 may make pip build NumPy from source)
 - Node.js 20 or newer and npm
 - At least 2 GB of free disk space for Python and PyTorch dependencies
 
@@ -73,12 +74,17 @@ GeoSentinelAI integrates with Neo4j (AuraDB or local instance) for transactional
 
 ```powershell
 cd backend
-Copy-Item .env.example .env
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+py -3.13 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
 ```
+
+If `.venv` was created with Python 3.14, remove that virtual environment and
+recreate it with Python 3.13. The conditional above preserves an existing
+`.env`. Calling the venv's `python.exe` directly also prevents Conda from
+selecting a different `pip` or `uvicorn`.
 
 The local `backend/.env` configures local CORS. Training is disabled by default
 in `.env.example` and in the Render Blueprint because the training endpoint has
@@ -92,10 +98,10 @@ available. Download and extract the OSCD Images and Train Labels archives,
 then run these commands from `backend`:
 
 ```powershell
-python prepare_oscd.py `
+.\.venv\Scripts\python.exe prepare_oscd.py `
   --source "D:\datasets\Onera Satellite Change Detection dataset - Images" `
   --labels "D:\datasets\Onera Satellite Change Detection dataset - Train Labels"
-python train_model.py
+.\.venv\Scripts\python.exe train_model.py
 ```
 
 The training API loads a resulting model at startup and exposes status through
@@ -123,7 +129,7 @@ the OSCD 10-channel model instead, prepare and train it first as described
 above. Start the backend from `backend`:
 
 ```powershell
-uvicorn app.main:app --reload --port 8000
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
 ```
 
 Then either click **LIVE SATELLITE SCAN** in the dashboard or call:

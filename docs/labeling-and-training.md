@@ -27,16 +27,28 @@ validation.
 From `backend`, prepare patches and train:
 
 ```powershell
-python prepare_oscd.py `
-  --source "D:\datasets\Onera Satellite Change Detection dataset - Images" `
-  --labels "D:\datasets\Onera Satellite Change Detection dataset - Train Labels"
-python train_model.py
+$images = Read-Host "Full path to the extracted OSCD Images directory"
+$labels = Read-Host "Full path to the extracted OSCD Train Labels directory"
+if (-not (Test-Path -LiteralPath (Join-Path $images "train.txt"))) {
+  throw "The Images directory must contain train.txt: $images"
+}
+if (-not (Test-Path -LiteralPath $labels)) {
+  throw "The Train Labels directory does not exist: $labels"
+}
+if (-not (Test-Path -LiteralPath (Join-Path $labels "bordeaux\cm\cm.png")) -and
+    -not (Test-Path -LiteralPath (Join-Path $labels "bordeaux\cm\cm.tif"))) {
+  throw "The Train Labels directory must directly contain city folders, including bordeaux\cm\cm.png or cm.tif."
+}
+.\.venv\Scripts\python.exe prepare_oscd.py --source $images --labels $labels
+if ($LASTEXITCODE -ne 0) { throw "OSCD patch preparation failed." }
+.\.venv\Scripts\python.exe train_model.py
 ```
 
 Preparation writes 32×32, 10-channel paired patches and a manifest under
 `backend/data/oscd/`. The directory is ignored by Git. Training uses
 memory-mapped patch files and fails clearly if preparation, labels, or either
-class is missing.
+class is missing. Do not copy example paths from another computer; use the
+actual directories created when you extracted both archives.
 
 Training outputs:
 

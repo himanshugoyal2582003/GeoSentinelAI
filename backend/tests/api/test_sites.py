@@ -92,3 +92,26 @@ def test_scan_site_passes_polygon_and_bbox_to_live_pipeline() -> None:
         region_name="Test quarry",
         region_id=site_id,
     )
+
+
+def test_delete_site_returns_empty_204_response() -> None:
+    with patch("app.api.sites.get_driver", return_value=MagicMock()), patch(
+        "app.api.sites.region_repository.deactivate_site", return_value=True
+    ):
+        response = client.delete("/api/sites/site-test")
+
+    assert response.status_code == 204
+    assert response.content == b""
+
+
+def test_cors_allows_local_next_dev_server_on_alternate_port() -> None:
+    response = client.options(
+        "/api/sites",
+        headers={
+            "Origin": "http://localhost:3001",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3001"

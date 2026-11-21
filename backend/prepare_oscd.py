@@ -282,13 +282,22 @@ def prepare_dataset(
     ))
     validation_cities = [city for city in official_train_cities if city.name in validation_names]
     training_cities = [city for city in official_train_cities if city.name not in validation_names]
+    missing_label_cities = [
+        city.name for city in official_train_cities if not (labels_root / city.name).is_dir()
+    ]
+    if missing_label_cities:
+        example_city = missing_label_cities[0]
+        raise FileNotFoundError(
+            "OSCD Train Labels are missing city folders: "
+            f"{', '.join(missing_label_cities)}. The labels directory must directly contain "
+            f"city folders with masks, for example {labels_root / example_city / 'cm' / mask_name}. "
+            "Extract the separate Train Labels archive and pass its city-folder root."
+        )
 
     for output_split, city_dirs in (("train", training_cities), ("validation", validation_cities)):
         city_summaries = []
         for city_dir in city_dirs:
             label_city_dir = labels_root / city_dir.name
-            if not label_city_dir.is_dir():
-                raise FileNotFoundError(f"OSCD labels for city '{city_dir.name}' not found in {labels_root}.")
             city_summaries.append(
                 prepare_city(
                     city_dir,

@@ -99,6 +99,7 @@ export default function Home() {
   const [liveScanning, setLiveScanning] = useState(false);
   const [training, setTraining] = useState(false);
   const [trainingMessage, setTrainingMessage] = useState("");
+  const [trainingError, setTrainingError] = useState("");
   const [reportTemplate, setReportTemplate] = useState<"quarry-compliance" | "landowner-evidence">("quarry-compliance");
   const [reportBrandName, setReportBrandName] = useState("");
   const [generatingReport, setGeneratingReport] = useState(false);
@@ -110,6 +111,8 @@ export default function Home() {
   const [siteDrawMode, setSiteDrawMode] = useState(false);
   const [siteBusy, setSiteBusy] = useState(false);
   const [siteError, setSiteError] = useState("");
+  const [siteLoadAttempt, setSiteLoadAttempt] = useState(0);
+  const [siteLoading, setSiteLoading] = useState(false);
   const waitingForDashboard = loading || (liveScanning && !data);
 
   function applyLiveResult(value: Dataset) {
@@ -142,6 +145,8 @@ export default function Home() {
 
   useEffect(() => {
     let active = true;
+    setSiteLoading(true);
+    setSiteError("");
     fetch(`${API}/api/sites`)
       .then(async (response) => {
         if (!response.ok) throw new Error(await parseApiError(response, "Could not load monitoring sites."));
@@ -151,12 +156,23 @@ export default function Home() {
         if (active) setSites(value.sites);
       })
       .catch((reason) => {
-        if (active) setSiteError(reason instanceof Error ? reason.message : "Could not load monitoring sites.");
+        if (active) {
+          setSiteError(
+            reason instanceof TypeError
+              ? `Cannot reach the API at ${API}. Check that the backend is running and CORS allows ${window.location.origin}.`
+              : reason instanceof Error
+                ? reason.message
+                : "Could not load monitoring sites.",
+          );
+        }
+      })
+      .finally(() => {
+        if (active) setSiteLoading(false);
       });
     return () => {
       active = false;
     };
-  }, []);
+  }, [siteLoadAttempt]);
 
   useEffect(() => {
     if (liveScanning || nextScanAt === null) return;
@@ -306,6 +322,8 @@ export default function Home() {
 
   async function trainCnn() {
     setTraining(true);
+    setError("");
+    setTrainingError("");
     setTrainingMessage("Starting OSCD CNN training...");
     try {
       const response = await fetch(`${API}/api/train`, { method: "POST" });
@@ -330,7 +348,8 @@ export default function Home() {
         setTrainingMessage("Training continues in the backend. Click TRAIN CNN again later to check its status.");
       }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "OSCD training failed");
+      setTrainingMessage("");
+      setTrainingError(reason instanceof Error ? reason.message : "OSCD training failed");
     } finally {
       setTraining(false);
     }
@@ -449,6 +468,21 @@ export default function Home() {
           <BrainCircuit size={16} /> {trainingMessage}
         </div>
       )}
+      {trainingError && (
+        <div className="training-error" role="alert">
+          <AlertTriangle size={17} />
+          <span>{trainingError}</span>
+          {trainingError.includes("Prepared OSCD patches are missing") && (
+            <a
+              href="https://ieee-dataport.org/open-access/oscd-onera-satellite-change-detection"
+              target="_blank"
+              rel="noreferrer"
+            >
+              GET OSCD DATASET
+            </a>
+          )}
+        </div>
+      )}
 
       <section className="site-manager">
         <div className="site-manager-heading">
@@ -488,7 +522,18 @@ export default function Home() {
         </div>
         {siteDrawMode && <p className="site-hint">Click at least three boundary points on the map below, then finish the polygon.</p>}
         {siteGeometry && <p className="site-hint">Polygon ready. Add a name and select SAVE SITE.</p>}
-        {siteError && <p className="site-error" role="alert">{siteError}</p>}
+        {siteError && (
+          <div className="site-error-row" role="alert">
+            <p className="site-error">{siteError}</p>
+            <button
+              className="site-action"
+              onClick={() => setSiteLoadAttempt((attempt) => attempt + 1)}
+              disabled={siteLoading}
+            >
+              {siteLoading ? "RETRYING..." : "RETRY"}
+            </button>
+          </div>
+        )}
         {!data && (
           <div className="site-draw-map">
             <LiveMap data={null} onSelect={setSelected} drawMode={siteDrawMode} draftGeometry={siteGeometry} onGeometryDrawn={handleDrawnGeometry} />

@@ -8,11 +8,11 @@ Run the following commands from the repository root.
 
 ```powershell
 Set-Location .\backend
-Copy-Item .env.example .env
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+py -3.13 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
 ```
 
 `backend/.env.example` contains local `CORS_ORIGINS` and sets
@@ -133,6 +133,16 @@ repository or expose them through the frontend.
   when possible.
 
 ## Troubleshooting
+
+### NumPy tries to compile or Uvicorn uses Conda
+
+On Windows, use Python 3.13 for the pinned backend dependencies. Check
+installed interpreters with `py -0p`. If the existing `.venv` was created
+with Python 3.14, remove that virtual environment and recreate it with
+`py -3.13 -m venv .venv`. Install and run commands through
+`.\.venv\Scripts\python.exe -m ...`; this avoids an Anaconda `pip` or
+`uvicorn` earlier on `PATH`. Do not install a C++ compiler just to work around
+NumPy being built from source under an unsupported Python version.
 
 ### HTTP 429
 

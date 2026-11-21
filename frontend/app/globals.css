@@ -203,6 +203,28 @@ main {
   font: 10px 'DM Mono';
 }
 
+.training-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid #e8c2b9;
+  background: #fff8f6;
+  color: #a63e2d;
+  font-size: 12px;
+}
+
+.training-error span {
+  flex: 1;
+}
+
+.training-error a {
+  color: inherit;
+  font: 10px 'DM Mono';
+  white-space: nowrap;
+}
+
 .controls {
   border: 1px solid var(--line);
   background: #fafaf7;
@@ -2302,6 +2324,18 @@ footer {
 .site-error {
   color: #a63e2d;
   font-size: 12px;
+}
+
+.site-error-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 0;
+}
+
+.site-error-row .site-error {
+  margin: 0;
 }
 
 .site-list {
