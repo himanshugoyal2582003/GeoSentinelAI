@@ -122,22 +122,24 @@ repository or expose them through the frontend.
 
 ## Operational cadence
 
-- Browser polling: every ten minutes.
+- Browser polling and shared live-result cache: every 30 minutes.
 - Scheduled polygon scans: no more often than every five days.
 - Render worker due-site check: daily at 03:00 UTC.
 - Catalog selection: up to eight newest scenes.
 - Catalog cloud filter: below 20%.
 - Expected Sentinel-2 revisit opportunity: approximately five days.
-- Provider rate limits: retries use exponential waits; cached result is used
+- Provider rate limits: automatic live requests reuse the latest successful
+  result for 30 minutes; if an acquisition fails, the cached result is used
   when possible.
 
 ## Troubleshooting
 
 ### HTTP 429
 
-Wait before manually scanning again. The backend retries requests and returns
-the latest cached real result when available. The UI labels this response
-`CACHED REAL FEED`.
+Wait for the 30-minute refresh window before requesting another automatic
+scan. The backend reuses the latest successful result during that window and
+returns the latest cached real result after a provider rate limit when
+available. The UI labels cached responses `CACHED REAL FEED`.
 
 ### Model shows `difference-fallback`
 

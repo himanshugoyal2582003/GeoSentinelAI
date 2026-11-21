@@ -45,7 +45,12 @@ persisted records.
 
 ## `GET /api/live-detect`
 
-Acquires and analyzes public scenes for the fixed Pune bounding box.
+Returns a cached or newly acquired analysis of public scenes for the fixed
+Pune bounding box. Automatic requests reuse a successful result for up to 30
+minutes to limit catalog traffic.
+
+The dashboard uses `GET` for automatic refreshes. An explicit `POST` requests a
+fresh acquisition and bypasses the shared cache.
 
 ### Main response fields
 
@@ -61,8 +66,11 @@ Acquires and analyzes public scenes for the fixed Pune bounding box.
 | `processing` | Reflectance bands/indices, threshold, SCL masking, alignment, and model metadata |
 | `source` | Provider, scene dates, cloud cover, 10 m COG resolution, media URLs, cadence |
 
-`source.stale` is `true` when the response is a cached real result. A fresh
-successful response does not set this flag.
+`source.stale` is `true` when the response is a cached real result.
+`source.cacheAgeSeconds` gives the age of any cached result. Results younger
+than 30 minutes satisfy the shared cache; an older result may be served after
+an acquisition failure or during its retry cooldown. A fresh successful
+response does not set these cache fields.
 
 ## Custom monitoring sites
 

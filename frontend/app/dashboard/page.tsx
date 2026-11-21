@@ -5,7 +5,7 @@ import { AlertTriangle, ArrowUpRight, CalendarDays, Crosshair, FileText, MapPin,
 import type { Map as LeafletMap } from "leaflet";
 import "leaflet/dist/leaflet.css";
 
-const LIVE_SCAN_INTERVAL_MS = 10 * 60 * 1000;
+const LIVE_SCAN_INTERVAL_MS = 30 * 60 * 1000;
 
 type Finding = {
   id: string;
@@ -61,6 +61,7 @@ type Dataset = {
     provider: string;
     note: string;
     stale?: boolean;
+    cacheAgeSeconds?: number;
     sceneCount?: number;
     geometry?: SiteGeometry;
     siteId?: string;
@@ -114,7 +115,12 @@ export default function Home() {
   function applyLiveResult(value: Dataset) {
     setData(value);
     setSelected(value.findings[0] || null);
-    setNextScanAt(Date.now() + LIVE_SCAN_INTERVAL_MS);
+    const cacheAgeMs = (value.source?.cacheAgeSeconds || 0) * 1000;
+    const refreshDelayMs =
+      value.source?.stale && cacheAgeMs >= LIVE_SCAN_INTERVAL_MS
+        ? LIVE_SCAN_INTERVAL_MS
+        : Math.max(0, LIVE_SCAN_INTERVAL_MS - cacheAgeMs);
+    setNextScanAt(Date.now() + refreshDelayMs);
   }
 
   useEffect(() => {
@@ -129,6 +135,7 @@ export default function Home() {
       })
       .catch((reason) => {
         setError(reason instanceof Error ? reason.message : "Live satellite feed unavailable.");
+        setNextScanAt(Date.now() + LIVE_SCAN_INTERVAL_MS);
         setLoading(false);
       });
   }, []);
@@ -152,11 +159,12 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      if (!liveScanning) void runLiveScan();
-    }, LIVE_SCAN_INTERVAL_MS);
-    return () => window.clearInterval(timer);
-  }, [liveScanning]);
+    if (liveScanning || nextScanAt === null) return;
+    const timer = window.setTimeout(() => {
+      void runLiveScan();
+    }, Math.max(0, nextScanAt - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [liveScanning, nextScanAt]);
 
   const maxArea = useMemo(() => {
     const areas = data?.timeline?.map((item) => item.areaSqm) || [];
@@ -290,6 +298,7 @@ export default function Home() {
       applyLiveResult(value);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Live scan failed");
+      setNextScanAt(Date.now() + LIVE_SCAN_INTERVAL_MS);
     } finally {
       setLiveScanning(false);
     }
@@ -522,7 +531,7 @@ export default function Home() {
             </div>
             <div>
               <span className="control-label">AUTO MONITORING</span>
-              <strong>Every 10 minutes</strong>
+              <strong>Every 30 minutes</strong>
               <small>{nextScanAt ? `Next scan ${new Date(nextScanAt).toLocaleTimeString()}` : "Starting..."}</small>
             </div>
             <div className="demo-badge">{data?.source ? "LIVE SATELLITE" : "DEMO DATASET"}</div>

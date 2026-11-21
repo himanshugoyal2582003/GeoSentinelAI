@@ -61,7 +61,8 @@ Neo4j is the primary store for successful scan and finding observations.
 `dataset/public-sentinel2-pune/` contains:
 
 - `historical.png` and `recent.png`: contrast-stretched RGB display previews
-  generated from the native Sentinel-2 COG bands;
+  downloaded from Sentinel-2 rendered-preview assets in the public STAC
+  catalog;
 - `manifest.json`: scene IDs, dates, cloud cover, source, and bbox;
 - `labels.csv`: optional expert patch labels.
 
@@ -71,9 +72,13 @@ The saved PNGs are for display only and are not used as analysis inputs.
 ## Cache and durability
 
 `backend/data/live/` contains the latest two images and `last-result.json`.
-The cache allows graceful display after provider rate limiting. Render's
-default filesystem is ephemeral; CSV history and cache should be moved to a
-persistent disk or external database for production retention.
+Automatic static-region requests share a successful result for up to 30
+minutes. Cached responses set `source.stale` and report `source.cacheAgeSeconds`;
+an older cached result may be displayed after acquisition failure or during
+the retry cooldown. Explicit `POST /api/live-detect` requests bypass the
+shared cache. Render's default filesystem is ephemeral; CSV history and cache
+should be moved to a persistent disk or external database for production
+retention.
 
 ## Neo4j Graph Model
 

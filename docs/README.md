@@ -6,6 +6,8 @@ not a legal determination or a replacement for field verification.
 
 ## Documentation map
 
+- [Repository root](../README.md) — project overview, setup, deployment, and
+  links to folder-specific guides.
 - [System architecture](./system-architecture.md) — components, boundaries,
   dependencies, and deployment topology.
 - [Working flow](./working-flow.md) — end-to-end scan, detection, review, and
@@ -20,6 +22,13 @@ not a legal determination or a replacement for field verification.
   limits, audit request form, and Netlify Forms setup.
 - [Labeling and training](./labeling-and-training.md) — expert labels,
   retraining, metrics, and model limitations.
+
+## Folder guides
+
+- [Backend](../backend/README.md) — service setup and backend module map.
+- [Frontend](../frontend/README.md) — Next.js setup, routes, and build.
+- [Dataset](../dataset/README.md) — included public preview dataset.
+- [Screenshots](./img/README.md) — dashboard image references.
 
 ## Quick links
 
@@ -40,7 +49,8 @@ The current implementation uses:
 4. Native B02, B03, B04, B08, B11, and SCL COG windows resampled to a common
    10 m UTM grid; RGB previews are retained only for dashboard display.
 5. Cloud-brightness masking, seasonal percentile normalization, FFT alignment,
-   pixel differencing, connected components, and an optional six-channel CNN.
+   pixel differencing, connected components, and a compatible ChangeCNN
+   (multispectral after OSCD training, otherwise the legacy RGB checkpoint).
 6. Neo4j as the primary scan/finding store, CSV as a recovery fallback, and
    Cloudflare R2 for durable scan previews when configured.
 

@@ -9,8 +9,10 @@
 3. The pricing form is submitted to Netlify Forms and redirects to
    `/audit-requested`; audit execution and customer onboarding remain manual.
 4. The dashboard requests `GET /api/live-detect`.
-5. The backend searches the public Sentinel-2 catalog.
-6. The dashboard shows the latest pair, findings, timeline, and map.
+5. The backend returns its shared successful result if it is less than 30
+   minutes old; otherwise it searches the public Sentinel-2 catalog.
+6. The dashboard shows the latest pair, findings, timeline, and map, clearly
+   labeling cached responses.
 7. If acquisition is rate-limited but a prior result exists, the page displays
    the cached real result and labels it **CACHED REAL FEED**.
 
@@ -90,12 +92,13 @@ dimensions, and images over four megapixels return explicit errors.
 
 ## 7. Scheduled scan behavior
 
-The browser refreshes the dashboard every ten minutes while it is open. An
-independent Render cron worker checks active custom sites daily and starts a
-new scan when the site's latest scan is at least five days old. These cadences
-are intentionally separate:
+The browser refreshes the dashboard every 30 minutes while it is open, and
+the backend shares one successful static-region result across requests during
+that interval. An independent Render cron worker checks active custom sites
+daily and starts a new scan when the site's latest scan is at least five days
+old. These cadences are intentionally separate:
 
-- **Ten minutes:** dashboard refresh/polling.
+- **30 minutes:** dashboard refresh and shared static-region cache.
 - **Five days:** minimum interval between scans of the same site.
 - **03:00 UTC daily:** worker checks which sites are due.
 - **Up to eight scenes:** historical context returned by one live request.

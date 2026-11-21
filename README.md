@@ -12,13 +12,33 @@ GeoSentinel is a hackathon MVP for monitoring suspicious quarry expansion from h
   - connected-component extraction, area estimation, severity scoring, and case-file generation;
   - retry and cached-real-feed handling when the public provider rate-limits requests.
 - Next.js dashboard with:
-  - automatic live scans every 10 minutes plus manual scan controls;
+  - automatic live scans every 30 minutes plus manual refresh controls;
   - up to eight low-cloud scenes for a multi-point temporal timeline;
   - OpenStreetMap map with finding selection;
   - evidence case-file panel;
   - Google Maps and Google satellite links;
   - explicit live-feed or cached-real-feed labeling;
   - branded scan reports, scheduled site checks, and thresholded email alerts.
+
+## Repository guides
+
+Each maintained project area has a local README with its purpose, key files,
+and relevant commands. Generated output, dependency folders, and runtime cache
+directories are intentionally not documented as source folders.
+
+| Area | Guide |
+|---|---|
+| Backend service | [backend/README.md](./backend/README.md) |
+| Backend application modules | [backend/app/README.md](./backend/app/README.md) |
+| Backend API routers | [backend/app/api/README.md](./backend/app/api/README.md) |
+| Backend persistence and services | [backend/app/db/README.md](./backend/app/db/README.md), [repositories](./backend/app/repositories/README.md), [services](./backend/app/services/README.md) |
+| Backend tests and tools | [tests](./backend/tests/README.md), [scripts](./backend/scripts/README.md) |
+| Frontend | [frontend/README.md](./frontend/README.md) |
+| Frontend routes and components | [frontend/app/README.md](./frontend/app/README.md) |
+| Documentation | [docs/README.md](./docs/README.md) |
+| Public demo data | [dataset/README.md](./dataset/README.md) |
+| Repository automation | [.github/README.md](./.github/README.md) |
+| Local agent tooling | [.agents/README.md](./.agents/README.md) |
 
 ## Screenshots
 
@@ -35,7 +55,7 @@ timeline summaries, and downloadable case reports.
 
 GeoSentinelAI integrates with Neo4j (AuraDB or local instance) for transactional graph persistence, spatial indexing of quarry change findings, and investigation case management:
 
-- **Graph Entities**: `MonitoringRegion`, `Scan`, `SatelliteScene`, `FindingObservation`, `EvidenceAsset`, `InvestigationCase`.
+- **Graph Entities**: `MonitoringRegion`, `Scan`, `SatelliteScene`, `FindingObservation`, `EvidenceAsset`, `InvestigationCase`, `Notification`.
 - **Spatial Queries**: Point index on WGS-84 coordinates for spatial proximity queries (`point.distance`).
 - **Investigation Intelligence**: Linking multi-temporal observations without premature auto-merging.
 - **CSV Migration**: Built-in dry-run, execution, and verification utilities (`backend/scripts/`).
@@ -120,8 +140,10 @@ under `/media/` are display previews only. A 10-channel `ChangeCNN` trained
 on OSCD supplies an additional live-scene score; the legacy six-channel
 checkpoint remains compatible. Findings include georeferenced coordinates.
 Sentinel-2 revisits the region approximately every five days; cloudy scenes
-are skipped. The dashboard automatically requests a new scan every ten
-minutes, subject to provider rate limits.
+are skipped. The dashboard refreshes every 30 minutes. Automatic requests
+reuse a successful shared result during that window; the dashboard labels
+cached imagery. An explicit `POST /api/live-detect` requests a fresh
+acquisition.
 
 ### Run the frontend
 
@@ -157,7 +179,8 @@ The complete endpoint reference is in
 | GET | `/api/health` | Check API and model availability |
 | GET | `/api/model` | Inspect loaded model status and metrics |
 | GET | `/api/scans` | Read persisted scan history |
-| GET | `/api/live-detect` | Acquire and analyze public Sentinel-2 scenes |
+| GET | `/api/live-detect` | Return the shared result or acquire after the 30-minute cache expires |
+| POST | `/api/live-detect` | Request a fresh public Sentinel-2 acquisition |
 | GET | `/api/sites` | List saved custom monitoring polygons |
 | POST | `/api/sites` | Create a monitoring site from GeoJSON |
 | POST | `/api/sites/import` | Import a KML or GeoJSON monitoring site |

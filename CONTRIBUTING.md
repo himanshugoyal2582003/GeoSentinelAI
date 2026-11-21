@@ -10,6 +10,9 @@ Thanks for your interest in improving GeoSentinel AI.
 4. Do not commit credentials, private imagery, generated environment files, or
    large local artifacts.
 
+Start with the [repository README](./README.md) for the project map, then use
+the nearest folder README for module-specific setup and ownership.
+
 ## Before opening a pull request
 
 Run the checks relevant to your change:

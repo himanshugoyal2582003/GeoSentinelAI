@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError
@@ -111,6 +112,10 @@ STATIC_BBOX = (73.82, 18.48, 73.90, 18.56)
 MAX_TIMELINE_SCENES = 8
 SENTINEL_REVISIT_DAYS = 5
 MAX_SITE_GRID_PIXELS = 4_000_000
+LIVE_SCAN_INTERVAL_MINUTES = 30
+LIVE_SCAN_CACHE_TTL_SECONDS = LIVE_SCAN_INTERVAL_MINUTES * 60
+LIVE_SCAN_LOCK = threading.Lock()
+_LAST_LIVE_SCAN_ATTEMPT: float | None = None
 
 MODEL_PATH = str(Path(__file__).resolve().parents[1] / "models" / "change_cnn.pt")
 CHANGE_MODEL = load_model(MODEL_PATH)
@@ -425,8 +430,11 @@ def _read_live_cache(cache_file: Path = CACHE_FILE) -> dict[str, Any] | None:
     if not cache_file.exists():
         return None
     try:
+        cache_age_seconds = max(0, int(time.time() - cache_file.stat().st_mtime))
         cached = json.loads(cache_file.read_text(encoding="utf-8"))
         cached["source"]["stale"] = True
+        cached["source"]["cacheAgeSeconds"] = cache_age_seconds
+        cached["source"]["monitoringIntervalMinutes"] = LIVE_SCAN_INTERVAL_MINUTES
         cached["source"]["note"] = (
             "Provider rate limit reached. Showing the most recent successfully downloaded "
             "real Sentinel-2 scan; run again later for a fresh acquisition."
@@ -434,6 +442,65 @@ def _read_live_cache(cache_file: Path = CACHE_FILE) -> dict[str, Any] | None:
         return cached
     except (OSError, ValueError, KeyError, TypeError):
         return None
+
+
+def _read_recent_live_cache(
+    cache_file: Path = CACHE_FILE,
+    *,
+    now: float | None = None,
+) -> dict[str, Any] | None:
+    try:
+        age_seconds = (time.time() if now is None else now) - cache_file.stat().st_mtime
+    except OSError:
+        return None
+    if age_seconds < 0 or age_seconds >= LIVE_SCAN_CACHE_TTL_SECONDS:
+        return None
+
+    cached = _read_live_cache(cache_file)
+    if cached is not None:
+        age_minutes = int(age_seconds // 60)
+        cached["source"]["cacheAgeSeconds"] = int(age_seconds)
+        cached["source"]["note"] = (
+            f"Reusing a real satellite scan from {age_minutes} minutes ago. "
+            f"Automatic refresh is limited to once every {LIVE_SCAN_INTERVAL_MINUTES} minutes."
+        )
+    return cached
+
+
+def _run_live_detect_request(
+    idempotency_key: str | None,
+    *,
+    allow_recent_cache: bool,
+) -> dict[str, Any]:
+    global _LAST_LIVE_SCAN_ATTEMPT
+
+    with LIVE_SCAN_LOCK:
+        if allow_recent_cache and idempotency_key is None:
+            cached = _read_recent_live_cache()
+            if cached is not None:
+                return cached
+
+            if _LAST_LIVE_SCAN_ATTEMPT is not None:
+                now = time.monotonic()
+                remaining = LIVE_SCAN_CACHE_TTL_SECONDS - (now - _LAST_LIVE_SCAN_ATTEMPT)
+                if remaining > 0:
+                    cached = _read_live_cache()
+                    if cached is not None:
+                        cached["source"]["note"] = (
+                            "A satellite refresh was attempted recently. Showing the last real scan "
+                            f"until the {LIVE_SCAN_INTERVAL_MINUTES}-minute refresh window ends."
+                        )
+                        return cached
+                    raise HTTPException(
+                        status_code=429,
+                        detail="Satellite data was requested recently. Retry after the 30-minute refresh window.",
+                        headers={"Retry-After": str(max(1, int(remaining)))},
+                    )
+
+        try:
+            return _execute_live_detect(idempotency_key=idempotency_key)
+        finally:
+            _LAST_LIVE_SCAN_ATTEMPT = time.monotonic()
 
 
 def _live_scenes(
@@ -648,7 +715,7 @@ def _execute_live_detect(
             "siteName": region_name,
             "sceneCount": len(scenes),
             "sceneCadenceDays": SENTINEL_REVISIT_DAYS,
-            "monitoringIntervalMinutes": 10,
+            "monitoringIntervalMinutes": LIVE_SCAN_INTERVAL_MINUTES,
             "sceneDates": [scene["properties"]["datetime"][:10] for scene in scenes],
             "note": "Public satellite imagery; detections are intelligence signals, not legal determinations.",
         }
@@ -698,7 +765,7 @@ def live_detect_post(
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> dict[str, Any]:
     """Preferred endpoint for live satellite acquisition, analysis, and graph persistence."""
-    return _execute_live_detect(idempotency_key=idempotency_key)
+    return _run_live_detect_request(idempotency_key, allow_recent_cache=False)
 
 
 @app.get("/api/live-detect")
@@ -706,9 +773,9 @@ def live_detect(
     response: Response,
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> dict[str, Any]:
-    """Backward-compatible GET endpoint for live detection (deprecated; use POST)."""
+    """Return a recent shared scan or acquire new data after the refresh interval."""
     response.headers["X-Deprecated"] = "Use POST /api/live-detect instead"
-    return _execute_live_detect(idempotency_key=idempotency_key)
+    return _run_live_detect_request(idempotency_key, allow_recent_cache=True)
 
 
 @app.post("/api/sites/{site_id}/scan")

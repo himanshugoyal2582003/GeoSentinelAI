@@ -103,8 +103,10 @@ fails, records are written to the CSV recovery fallback:
 - `backend/data/findings.csv`
 
 The latest result and local display cache are written under
-`backend/data/live/`. Scan preview images are also written to Cloudflare R2
-when configured. If the provider rate-limits or another acquisition error
+`backend/data/live/`. Automatic static-region requests share a successful
+result for 30 minutes; cached responses include `source.stale: true` and
+`source.cacheAgeSeconds`. Scan preview images are also written to Cloudflare
+R2 when configured. If the provider rate-limits or another acquisition error
 occurs, `last-result.json` is returned with `source.stale: true` when available.
 
 ## Frontend boundaries
@@ -117,16 +119,17 @@ The frontend:
 - serves the dashboard at `/dashboard`;
 - calls `/api/live-detect` on initial load;
 - calls it manually from **LIVE SATELLITE SCAN**;
-- calls it automatically every ten minutes while the page is open;
+- calls it automatically every 30 minutes while the page is open;
 - displays live or cached-real-feed status;
 - renders the two comparison images;
 - renders findings on OpenStreetMap;
 - opens Google Maps and Google satellite links;
 - downloads branded PDF reports for persisted scans.
 
-The ten-minute interval is an application polling interval. It does not create
-new satellite imagery; Sentinel-2 observations are naturally available at an
-approximately five-day revisit cadence and cloudy observations can be skipped.
+The 30-minute interval is an application polling and cache interval. It does
+not create new satellite imagery; Sentinel-2 observations are naturally
+available at an approximately five-day revisit cadence and cloudy observations
+can be skipped.
 
 ## Deployment topology
 
