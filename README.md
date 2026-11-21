@@ -17,7 +17,8 @@ GeoSentinel is a hackathon MVP for monitoring suspicious quarry expansion from h
   - OpenStreetMap map with finding selection;
   - evidence case-file panel;
   - Google Maps and Google satellite links;
-  - explicit live-feed or cached-real-feed labeling.
+  - explicit live-feed or cached-real-feed labeling;
+  - branded scan reports, scheduled site checks, and thresholded email alerts.
 
 ## Screenshots
 
@@ -48,8 +49,6 @@ GeoSentinelAI integrates with Neo4j (AuraDB or local instance) for transactional
 - Node.js 20 or newer and npm
 - At least 2 GB of free disk space for Python and PyTorch dependencies
 
-### Run the backend
-
 ### Backend
 
 ```powershell
@@ -61,9 +60,10 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
-The local `backend/.env` enables the CNN training button and configures local
-CORS. It is ignored by Git. On Render, set the same variables in the service
-environment; `render.yaml` enables training for the hackathon.
+The local `backend/.env` configures local CORS. Training is disabled by default
+in `.env.example` and in the Render Blueprint because the training endpoint has
+no authentication. Set `TRAINING_ENABLED=true` only for a trusted environment
+with prepared OSCD data. The local `.env` is ignored by Git.
 
 The checked-in model is a legacy six-channel RGB checkpoint. Phase 3 prepares
 OSCD Sentinel-2 multispectral data into ignored local files under
@@ -91,7 +91,9 @@ Long-term monitoring now includes:
 - catalog cloud-cover filtering plus bright-cloud pixel masking;
 - FFT phase-correlation image alignment;
 - per-channel seasonal/brightness normalization;
-- Neo4j scan/finding persistence with CSV fallback in `backend/data/`;
+- Neo4j scan/finding persistence with CSV recovery fallback in `backend/data/`;
+- durable R2 image storage when deployment credentials are configured;
+- five-day minimum scheduled site cadence and thresholded operator email alerts;
 - `GET /api/scans` for stored scan history and finding tracking.
 
 ### Scan the static satellite location
@@ -129,9 +131,10 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000 for the sign-in/sign-up UI preview. Authentication is
-not connected in this MVP; use **View Live Demo** to open the dashboard at
-http://localhost:3000/dashboard. The frontend expects the API at
+Open http://localhost:3000 for the public overview. The site also includes
+pricing and a free-audit request page at http://localhost:3000/pricing, and the
+live dashboard at http://localhost:3000/dashboard. Authentication and online
+payment are not connected in this MVP. The frontend expects the API at
 `http://localhost:8000`; set `NEXT_PUBLIC_API_URL` to override it.
 
 ### Verify the setup
@@ -186,6 +189,9 @@ See the [complete documentation index](./docs/README.md) for the architecture,
 working flow, API reference, data model, operations guide, and labeling/training
 workflow.
 
+See the [pricing and free-audit guide](./docs/pricing-and-audit.md) for offer
+details, current service limits, and Netlify Forms setup.
+
 The generated [architecture diagram](./.github/modernize/assessment/engines/facts/architecture-diagram.md)
 shows the application layers and component relationships.
 
@@ -210,23 +216,24 @@ Set `CORS_ORIGINS` in Render to the exact browser origin(s) that will call the
 API, separated by commas. For example:
 
 ```text
-CORS_ORIGINS=https://geosentinel-ui.onrender.com
+CORS_ORIGINS=https://your-site.netlify.app
 ```
 
-The dashboard's **TRAIN CNN** button calls `/api/train`. The included Render
-Blueprint enables this endpoint for the hackathon. Training requires prepared
-OSCD patches under `backend/data/oscd/`; the dataset is not committed, so a
-deployment must provision it before training. The model reloads when training
-completes. For a public production deployment, set `TRAINING_ENABLED=false`
-because this endpoint has no authentication layer.
+The dashboard's **TRAIN CNN** button calls `/api/train`. The endpoint is
+disabled by default in the Render Blueprint because it has no authentication
+layer. To train in a trusted environment, temporarily set
+`TRAINING_ENABLED=true` and provision prepared OSCD patches under
+`backend/data/oscd/`; the dataset is not committed. The model reloads when
+training completes. Disable the endpoint again after training.
 
 Local origins remain enabled for development. Do not use `*` with credentials.
 Set the frontend build environment variable `NEXT_PUBLIC_API_URL` to the
 deployed API URL, for example `https://geosentinel-api.onrender.com`.
 
-Render's default filesystem is ephemeral, so CSV scan history and downloaded
-live images are not durable across redeploys or restarts. Add a persistent disk
-or move these records to durable storage for production retention.
+Neo4j is the primary durable scan store. Render's local filesystem is
+ephemeral: CSV recovery files and local media are not durable across redeploys.
+Configure the documented Cloudflare R2 variables for durable scan images and
+keep Neo4j credentials configured on both the web service and cron worker.
 
 ### Deploy the frontend to Netlify
 
@@ -236,7 +243,7 @@ into Netlify and use the detected configuration, or configure:
 ```text
 Base directory: frontend
 Build command: npm run build
-Publish directory: frontend/out
+Publish directory: out
 ```
 
 Set this Netlify environment variable before building:
@@ -254,6 +261,10 @@ CORS_ORIGINS=https://your-site.netlify.app
 
 If you add a custom frontend domain, include both origins separated by commas.
 Redeploy the Render backend after changing `CORS_ORIGINS`.
+
+The pricing page's free-audit form uses Netlify Forms. Confirm that form
+detection is enabled for the site and that a test submission appears in the
+Netlify dashboard; local development does not store form submissions.
 
 ## Upload API
 

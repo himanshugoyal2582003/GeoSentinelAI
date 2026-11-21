@@ -81,7 +81,7 @@ GeoSentinel persists findings and investigations in a Neo4j AuraDB graph
 database. The CSV files remain as a backup/audit trail; Neo4j is the primary
 queryable store.
 
-### Node types (6)
+### Node types (7)
 
 | Label | Key property | Description |
 |---|---|---|
@@ -91,6 +91,7 @@ queryable store.
 | `FindingObservation` | `detection_id` | A detected change component from one scan. Stores `original_finding_id`, `scan_id`, `label`, `severity` (`high`/`medium`/`low`), `confidence` (0–1), `area_sqm`, `location` (spatial Point, see below), `first_observed`, `last_observed`, `change_type`, `model_score` (optional), `detection_error_sqm`, `region_bbox` (JSON string), `review_status`, `created_at`. |
 | `EvidenceAsset` | `asset_id` | Metadata record for a saved evidence file (image, report). Stores `uri`, `sha256`, `media_type`, `file_size` (bytes), `asset_type`, `created_at`. **Image bytes are NOT stored in Neo4j**; `uri` points to external or local file storage. |
 | `InvestigationCase` | `case_id` | A human-managed review case. Stores `title`, `status`, `review_status`, `created_at`, `updated_at`, `description`. |
+| `Notification` | `notification_id` | Idempotent scheduled-alert queue item. Stores `scan_id`, `subject`, `body`, `status`, `attempts`, `created_at`, and delivery timestamps/errors. The operator recipient is read from deployment configuration, not stored in Neo4j. |
 
 ### Relationships (5)
 
@@ -129,8 +130,10 @@ proximity queries.
 Evidence asset files (PNG images, JSON reports) are **not** stored inside
 Neo4j. The `EvidenceAsset` node contains metadata only: `uri`, `sha256`,
 `media_type`, `file_size`, and `asset_type`. In local development files are
-written under `backend/data/evidence/`. In production, use external durable
-storage (S3, GCS, or similar) because Render's default filesystem is ephemeral.
+written under `backend/data/evidence/`. Production uses a private Cloudflare
+R2 bucket through the S3-compatible evidence storage adapter. Scan-level
+`source_metadata` records the before/after object URIs, hashes, and sizes;
+Neo4j never stores the image bytes.
 
 ### Idempotency and MERGE strategy
 

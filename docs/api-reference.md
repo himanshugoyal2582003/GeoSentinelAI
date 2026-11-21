@@ -154,8 +154,9 @@ without live source metadata.
 Starts asynchronous OSCD CNN training from prepared patches in
 `backend/data/oscd/`. The endpoint returns immediately with a training state.
 It is available only when the backend environment variable
-`TRAINING_ENABLED=true`, and reports failure if OSCD preparation has not been
-run.
+`TRAINING_ENABLED=true`. It is disabled by default in the sample environment
+and Render Blueprint because the endpoint is unauthenticated. It reports
+failure if OSCD preparation has not been run.
 
 ## `GET /api/train`
 
@@ -185,8 +186,9 @@ not used.
 
 ## Media
 
-`/media/historical-live.png` and `/media/recent-live.png` serve the latest
-downloaded comparison images from the backend media directory.
+`/media/historical-{capture_id}.png` and `/media/recent-{capture_id}.png`
+serve scan-specific comparison images from the backend media directory. These
+are used to avoid attaching a later scan's imagery to an earlier report.
 
 
 ## `GET /api/health/ready`
@@ -227,6 +229,30 @@ Retrieves a single persisted scan by its `scan_id`. Returns `404 Not Found` if m
   "model_name": "ChangeCNN"
 }
 ```
+
+## `GET /api/scans/{scan_id}/report.pdf`
+
+Downloads a one-page branded screening report for a persisted scan. The report
+includes the selected finding, observation dates, changed area, cloud-mask
+status, before/after scan-specific image crops with overlays when available,
+and a Google Satellite link. If Neo4j is unavailable, the endpoint can also
+retrieve scans written to the CSV fallback.
+
+Query parameters:
+
+- `template`: `quarry-compliance` (default) or `landowner-evidence`.
+- `brand_name`: report header/author, 1-80 characters (default `GeoSentinel AI`).
+- `finding_id`: optional original finding ID; defaults to the scan's first finding.
+
+Returns `application/pdf`; unknown scans or findings return `404`, and
+unavailable report storage returns `503`. The report is a screening aid, not a
+legal determination or a substitute for field verification.
+
+## `GET /api/scans/{scan_id}/images/{kind}`
+
+Streams the stored scan preview (`kind` is `historical` or `recent`). The
+backend reads from the configured evidence storage provider; older scans may
+use their existing local preview when available.
 
 ## `GET /api/findings/{detection_id}`
 

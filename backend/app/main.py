@@ -29,6 +29,7 @@ from .api.graph import router as graph_router
 # Import sub-routers
 from .api.health import router as health_router
 from .api.investigations import router as investigations_router
+from .api.pdf_reports import router as pdf_reports_router
 from .api.scans import router as scans_router
 from .api.sites import router as sites_router
 from .change_model import load_model
@@ -42,6 +43,7 @@ from .services.detection_service import (
     validate_image_pair,
     validate_pixel_size,
 )
+from .services.evidence_service import get_default_storage
 from .services.persistence_service import persist_scan
 from .satellite_cog import (
     RasterGrid,
@@ -99,6 +101,7 @@ app.include_router(findings_router)
 app.include_router(investigations_router)
 app.include_router(graph_router)
 app.include_router(sites_router)
+app.include_router(pdf_reports_router)
 
 MEDIA_DIR = Path(__file__).resolve().parents[1] / "data" / "live"
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
@@ -340,6 +343,8 @@ def _analyse_pair(
         "modelInputChannels": CHANGE_MODEL.input_channels if CHANGE_MODEL is not None else None,
         "modelAppliedToFindings": sum(item["modelScore"] is not None for item in findings),
         "cloudMaskPixels": int(cloud_mask.sum()),
+        "cloudMaskFraction": round(float(cloud_mask.mean()), 4),
+        "gridPixelCount": int(mask.size),
         "alignmentShiftPixels": [round(shift[0], 3), round(shift[1], 3)],
         "seasonalNormalization": "per-channel percentile matching",
     }
@@ -533,6 +538,27 @@ def _analyse_scene_pair(
     )
 
 
+def _persist_scan_images(
+    source: dict[str, Any],
+    historical_path: Path,
+    recent_path: Path,
+) -> None:
+    storage = get_default_storage()
+    for kind, image_path in (
+        ("historical", historical_path),
+        ("recent", recent_path),
+    ):
+        uri, sha256, file_size = storage.store_bytes(image_path.read_bytes(), image_path.name)
+        source[f"{kind}ImageAssetUri"] = uri
+        source[f"{kind}ImageSha256"] = sha256
+        source[f"{kind}ImageFileSize"] = file_size
+
+
+def _set_scan_image_urls(source: dict[str, Any], scan_id: str) -> None:
+    for kind in ("historical", "recent"):
+        source[f"{kind}Image"] = f"/api/scans/{scan_id}/images/{kind}"
+
+
 def _execute_live_detect(
     idempotency_key: str | None = None,
     *,
@@ -543,7 +569,7 @@ def _execute_live_detect(
 ) -> dict[str, Any]:
     """Internal implementation of live detection."""
     cache_file = CACHE_FILE if region_id is None else MEDIA_DIR / f"last-result-{region_id}.json"
-    media_suffix = "live" if region_id is None else region_id
+    image_capture_id = uuid4().hex
     try:
         grid = create_target_grid(bbox, resolution_m=10)
         if grid.width * grid.height > MAX_SITE_GRID_PIXELS:
@@ -581,8 +607,8 @@ def _execute_live_detect(
         historical, recent = scenes[0], scenes[-1]
         old_image = rgb_preview(first_raster.bands)
         new_image = rgb_preview(previous_raster.bands)
-        historical_path = MEDIA_DIR / f"historical-{media_suffix}.png"
-        recent_path = MEDIA_DIR / f"recent-{media_suffix}.png"
+        historical_path = MEDIA_DIR / f"historical-{image_capture_id}.png"
+        recent_path = MEDIA_DIR / f"recent-{image_capture_id}.png"
         Image.fromarray(old_image).save(historical_path, format="PNG")
         Image.fromarray(new_image).save(recent_path, format="PNG")
         result = _analyse_scene_pair(
@@ -610,8 +636,16 @@ def _execute_live_detect(
             "assetType": "Native Sentinel-2 L2A COG",
             "bands": ["B02", "B03", "B04", "B08", "B11", "SCL"],
             "resolutionMeters": grid.resolution_m,
-            "historicalImage": f"/media/historical-{media_suffix}.png",
-            "recentImage": f"/media/recent-{media_suffix}.png",
+            "grid": {
+                "crs": grid.crs,
+                "transform": list(grid.transform)[:6],
+                "width": grid.width,
+                "height": grid.height,
+            },
+            "imageCaptureId": image_capture_id,
+            "historicalImage": f"/media/historical-{image_capture_id}.png",
+            "recentImage": f"/media/recent-{image_capture_id}.png",
+            "siteName": region_name,
             "sceneCount": len(scenes),
             "sceneCadenceDays": SENTINEL_REVISIT_DAYS,
             "monitoringIntervalMinutes": 10,
@@ -622,6 +656,7 @@ def _execute_live_detect(
             result["region"] = region_name
             result["regionId"] = region_id
             result["source"]["geometry"] = geometry
+        _persist_scan_images(result["source"], historical_path, recent_path)
 
         # Persist to Neo4j (and CSV fallback)
         try:
@@ -637,6 +672,7 @@ def _execute_live_detect(
             logger.warning("Neo4j persistence failed, saving via CSV fallback: %s", exc)
             result["scanId"] = save_scan(result, result["source"])
 
+        _set_scan_image_urls(result["source"], result["scanId"])
         cache_file.write_text(json.dumps(result), encoding="utf-8")
         return result
     except HTTPException:
@@ -650,6 +686,7 @@ def _execute_live_detect(
             detail=f"Live Sentinel-2 provider rate-limited the request (HTTP {exc.code}). Try again later.",
         ) from exc
     except Exception as exc:
+        logger.warning("Live Sentinel-2 scan failed: %s", exc)
         cached = _read_live_cache(cache_file)
         if cached:
             return cached
@@ -761,6 +798,23 @@ async def detect(
     }
     result["source"] = source
 
+    image_capture_id = uuid4().hex
+    historical_path = MEDIA_DIR / f"historical-{image_capture_id}.png"
+    recent_path = MEDIA_DIR / f"recent-{image_capture_id}.png"
+    Image.fromarray(old_image.astype(np.uint8)).save(historical_path, format="PNG")
+    Image.fromarray(new_image.astype(np.uint8)).save(recent_path, format="PNG")
+    source.update({
+        "assetType": "User-uploaded RGB images",
+        "imageCaptureId": image_capture_id,
+        "historicalImage": f"/media/historical-{image_capture_id}.png",
+        "recentImage": f"/media/recent-{image_capture_id}.png",
+    })
+    try:
+        _persist_scan_images(source, historical_path, recent_path)
+    except Exception as exc:
+        logger.exception("Could not persist uploaded scan evidence")
+        raise HTTPException(status_code=503, detail="Scan evidence storage is unavailable.") from exc
+
     # 4. Persist to Neo4j (and CSV fallback)
     try:
         scan_id = persist_scan(
@@ -775,4 +829,5 @@ async def detect(
         logger.warning("Neo4j persistence failed for upload, saving via CSV fallback: %s", exc)
         result["scanId"] = save_scan(result, source)
 
+    _set_scan_image_urls(source, result["scanId"])
     return result

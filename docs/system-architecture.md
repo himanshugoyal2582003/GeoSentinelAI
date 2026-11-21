@@ -4,8 +4,9 @@
 
 GeoSentinel AI has two runtime applications:
 
-- **Frontend:** Next.js sign-in/sign-up preview and dashboard served to a
-  browser. Authentication is not connected in this MVP.
+- **Frontend:** Static-exported Next.js overview, pricing/audit-request pages,
+  and dashboard served to a browser. Authentication and online payment are not
+  connected in this MVP.
 - **Backend:** FastAPI service that acquires public imagery, performs analysis,
   persists scans to Neo4j with CSV fallback, and serves media and JSON results.
 
@@ -15,16 +16,20 @@ External services are public or browser-facing:
 - Nominatim reverse geocoding.
 - OpenStreetMap tiles in the browser.
 - Google Maps links opened from finding reports.
+- Netlify Forms for free-audit request collection after deployment.
 
 ```mermaid
 flowchart LR
-    Browser[Next.js dashboard] -->|JSON/CORS| API[FastAPI backend]
+    Browser[Next.js frontend] -->|JSON/CORS| API[FastAPI backend]
+    Browser -->|Form submission| Forms[Netlify Forms]
     Browser -->|Map tiles| OSM[OpenStreetMap]
     Browser -->|Open links| Google[Google Maps / Satellite]
     API -->|STAC search + signed COG windows| MPC[Microsoft Planetary Computer]
     API -->|Reverse geocode| Nominatim[Nominatim]
-    API -->|Read/write| Files[(PNG cache + CSV fallback + model)]
+    API -->|Local cache + CSV fallback| Files[(Ephemeral files + model)]
     API -->|Graph persistence| Neo4j[(Neo4j)]
+    API -->|Scan images| R2[(Cloudflare R2)]
+    Worker[Daily scan worker] -->|Thresholded email| Brevo[Brevo API]
 ```
 
 ## Repository structure
@@ -45,8 +50,10 @@ backend/
 dataset/
   public-sentinel2-pune/   Real preview pair, manifest, labels.csv
 frontend/
-  app/page.tsx             Sign-in/sign-up UI preview (no auth backend)
-  app/dashboard/page.tsx   Dashboard, scan actions, map, reports
+  app/page.tsx              Public overview
+  app/pricing/page.tsx      Pricing and Netlify audit request form
+  app/audit-requested/      Static form confirmation
+  app/dashboard/page.tsx    Dashboard, scan actions, map, reports
   app/globals.css          Dashboard styling
   app/layout.tsx           Metadata and shell
 render.yaml                Render backend service definition
@@ -90,19 +97,24 @@ points. At most ten components are returned per pair.
 ### Persistence
 
 Successful scans are written transactionally to Neo4j. If graph persistence
-fails, records are written to the CSV fallback:
+fails, records are written to the CSV recovery fallback:
 
 - `backend/data/scans.csv`
 - `backend/data/findings.csv`
 
-The latest result and two display-preview images are written under
-`backend/data/live/`. If the provider rate-limits or another acquisition error
+The latest result and local display cache are written under
+`backend/data/live/`. Scan preview images are also written to Cloudflare R2
+when configured. If the provider rate-limits or another acquisition error
 occurs, `last-result.json` is returned with `source.stale: true` when available.
 
 ## Frontend boundaries
 
-The dashboard:
+The frontend:
 
+- serves the public overview, pricing, and request-confirmation routes;
+- submits audit requests to Netlify Forms after deployment;
+- provides a one-site flat-rate offer and describes the current service limits;
+- serves the dashboard at `/dashboard`;
 - calls `/api/live-detect` on initial load;
 - calls it manually from **LIVE SATELLITE SCAN**;
 - calls it automatically every ten minutes while the page is open;
@@ -110,7 +122,7 @@ The dashboard:
 - renders the two comparison images;
 - renders findings on OpenStreetMap;
 - opens Google Maps and Google satellite links;
-- downloads a JSON case report in the browser.
+- downloads branded PDF reports for persisted scans.
 
 The ten-minute interval is an application polling interval. It does not create
 new satellite imagery; Sentinel-2 observations are naturally available at an
@@ -128,5 +140,8 @@ Check:  /api/health
 
 The frontend can be deployed separately and must set
 `NEXT_PUBLIC_API_URL` to the backend URL. The backend accepts localhost origins
-and additional exact origins from `CORS_ORIGINS`.
+and additional exact origins from `CORS_ORIGINS`. The Netlify static export
+publishes the frontend's `out/` directory. Add the deployed Netlify origin
+exactly to Render's `CORS_ORIGINS`. The training endpoint is disabled by
+default because it has no authentication.
 

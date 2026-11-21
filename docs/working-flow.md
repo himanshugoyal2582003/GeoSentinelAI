@@ -2,13 +2,16 @@
 
 ## 1. User opens the application
 
-1. The browser loads the sign-in/sign-up UI at `/`. Authentication is not
-   connected; the form does not send or store credentials.
-2. The user opens the public live demo at `/dashboard`.
-3. The dashboard requests `GET /api/live-detect`.
-4. The backend searches the public Sentinel-2 catalog.
-5. The dashboard shows the latest pair, findings, timeline, and map.
-6. If acquisition is rate-limited but a prior result exists, the page displays
+1. The browser loads the public overview at `/`. No account or authentication
+   is required.
+2. The visitor can review the offer at `/pricing`, request a free audit, or
+   open the public live demo at `/dashboard`.
+3. The pricing form is submitted to Netlify Forms and redirects to
+   `/audit-requested`; audit execution and customer onboarding remain manual.
+4. The dashboard requests `GET /api/live-detect`.
+5. The backend searches the public Sentinel-2 catalog.
+6. The dashboard shows the latest pair, findings, timeline, and map.
+7. If acquisition is rate-limited but a prior result exists, the page displays
    the cached real result and labels it **CACHED REAL FEED**.
 
 ## 2. Live acquisition flow
@@ -66,9 +69,10 @@ Each finding contains:
 - Google Maps and satellite URLs;
 - a case-file status of `Needs review`.
 
-Selecting a finding updates the case-file panel. The report button creates a
-downloadable JSON report containing the source, observation window, finding,
-and interpretation warning.
+Selecting a finding updates the case-file panel. Choose a quarry/EIA or
+landowner evidence template and optional report brand, then download a
+one-page PDF with the selected finding, observation window, cloud status,
+before/after imagery when available, and verification cautions.
 
 ## 5. Timeline flow
 
@@ -86,17 +90,29 @@ dimensions, and images over four megapixels return explicit errors.
 
 ## 7. Scheduled scan behavior
 
-The browser schedules another request every ten minutes while the dashboard is
-open. This is intentionally separate from satellite revisit timing:
+The browser refreshes the dashboard every ten minutes while it is open. An
+independent Render cron worker checks active custom sites daily and starts a
+new scan when the site's latest scan is at least five days old. These cadences
+are intentionally separate:
 
 - **Ten minutes:** dashboard refresh/polling.
-- **Approximately five days:** Sentinel-2 revisit opportunity.
+- **Five days:** minimum interval between scans of the same site.
+- **03:00 UTC daily:** worker checks which sites are due.
 - **Up to eight scenes:** historical context returned by one live request.
 
-Keep the dashboard open for automatic polling. A server-side scheduler is not
-currently configured.
+Scheduled scans run even when no browser is open. Manual site scans also reset
+the five-day interval. Cached results are not treated as fresh scheduled scans
+and never generate alerts.
 
-## 8. Custom monitoring sites
+## 8. Scheduled alert behavior
+
+The worker queues an operator email through Brevo only for a fresh scan with
+known cloud-mask coverage below 20% and at least one finding of 1,000 m² or
+more with confidence at or above 80%. Delivery state is stored in Neo4j and
+failed deliveries are retried. The email explicitly describes the detection
+as an automated screening signal, not a legal determination.
+
+## 9. Custom monitoring sites
 
 1. The user imports a KML/GeoJSON polygon or draws a boundary on the map.
 2. The dashboard sends the polygon to `POST /api/sites` or uploads the file to

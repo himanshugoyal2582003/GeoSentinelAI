@@ -39,6 +39,7 @@ type MonitoringSite = {
 };
 
 type Dataset = {
+  scanId?: string;
   mode: string;
   region: string;
   historicalDate: string;
@@ -97,6 +98,9 @@ export default function Home() {
   const [liveScanning, setLiveScanning] = useState(false);
   const [training, setTraining] = useState(false);
   const [trainingMessage, setTrainingMessage] = useState("");
+  const [reportTemplate, setReportTemplate] = useState<"quarry-compliance" | "landowner-evidence">("quarry-compliance");
+  const [reportBrandName, setReportBrandName] = useState("");
+  const [generatingReport, setGeneratingReport] = useState(false);
   const [nextScanAt, setNextScanAt] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [sites, setSites] = useState<MonitoringSite[]>([]);
@@ -323,22 +327,38 @@ export default function Home() {
     }
   }
 
-  function downloadReport() {
+  async function downloadReport() {
     if (!selected || !data) return;
-    const report = {
-      reportTitle: `GeoSentinel change report - ${selected.id}`,
-      generatedAt: new Date().toISOString(),
-      source: data.source,
-      observationWindow: { historical: data.historicalDate, recent: data.recentDate },
-      finding: selected,
-      interpretation: "Automated surface-change signal from Sentinel-2 imagery. Verify permits and field conditions before enforcement.",
-    };
-    const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }));
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${selected.id}-change-report.json`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    if (!data.scanId) {
+      setError("A persisted scan is required to generate a PDF report. Run a new scan and try again.");
+      return;
+    }
+
+    setGeneratingReport(true);
+    setError("");
+    try {
+      const query = new URLSearchParams({
+        template: reportTemplate,
+        brand_name: reportBrandName.trim() || "GeoSentinel AI",
+        finding_id: selected.id,
+      });
+      const response = await fetch(
+        `${API}/api/scans/${encodeURIComponent(data.scanId)}/report.pdf?${query.toString()}`,
+      );
+      if (!response.ok) {
+        throw new Error(await parseApiError(response, "Could not generate the PDF report"));
+      }
+      const url = URL.createObjectURL(await response.blob());
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${selected.id.replace(/[^A-Za-z0-9_-]/g, "-")}-${reportTemplate}.pdf`;
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "PDF report generation failed");
+    } finally {
+      setGeneratingReport(false);
+    }
   }
 
   return (
@@ -719,8 +739,33 @@ export default function Home() {
                       SATELLITE VIEW <ArrowUpRight size={14} />
                     </a>
                   </div>
-                  <button className="generate-button" onClick={downloadReport}>
-                    DOWNLOAD FULL REPORT <ArrowUpRight size={15} />
+                  <div className="report-controls">
+                    <label>
+                      REPORT TEMPLATE
+                      <select
+                        value={reportTemplate}
+                        onChange={(event) => setReportTemplate(event.target.value as typeof reportTemplate)}
+                      >
+                        <option value="quarry-compliance">Quarry / EIA compliance</option>
+                        <option value="landowner-evidence">Landowner evidence</option>
+                      </select>
+                    </label>
+                    <label>
+                      WHITE-LABEL BRAND
+                      <input
+                        value={reportBrandName}
+                        onChange={(event) => setReportBrandName(event.target.value.slice(0, 80))}
+                        placeholder="GeoSentinel AI"
+                        maxLength={80}
+                      />
+                    </label>
+                  </div>
+                  <button
+                    className="generate-button"
+                    onClick={downloadReport}
+                    disabled={generatingReport || !data?.scanId}
+                  >
+                    {generatingReport ? "GENERATING PDF..." : "DOWNLOAD PDF REPORT"} <ArrowUpRight size={15} />
                   </button>
                 </div>
               ) : (

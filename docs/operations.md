@@ -2,10 +2,12 @@
 
 ## Local startup
 
+Run the following commands from the repository root.
+
 ### Backend
 
 ```powershell
-cd E:\hackfront\backend
+Set-Location .\backend
 Copy-Item .env.example .env
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
@@ -13,30 +15,33 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
-`backend/.env.example` contains local `CORS_ORIGINS` and
-`TRAINING_ENABLED=true`. Copy it to `backend/.env`; the actual `.env` file is
-ignored by Git. Render does not receive this local file, so configure the same
-variables in the Render service environment or through `render.yaml`.
+`backend/.env.example` contains local `CORS_ORIGINS` and sets
+`TRAINING_ENABLED=false`. Copy it to `backend/.env`; the actual `.env` file is
+ignored by Git. Training is disabled unless you explicitly enable it in a
+trusted environment with prepared OSCD data. Render does not receive this local
+file, so configure deployment variables in the Render service environment.
 
 ### Frontend
 
 ```powershell
-cd E:\hackfront\frontend
+Set-Location .\frontend
 npm install
 npm run dev
 ```
 
-Open `http://localhost:3000` for the sign-in/sign-up UI preview. Authentication
-is not connected in this MVP; open `http://localhost:3000/dashboard` to use the
-live dashboard.
+Open `http://localhost:3000` for the public overview,
+`http://localhost:3000/pricing` for pricing and the free-audit request, or
+`http://localhost:3000/dashboard` for the live dashboard. Authentication and
+online payment are not connected in this MVP.
 
 ## Render deployment
 
 The root [`render.yaml`](../render.yaml) defines the backend service. Create a
-Render Blueprint from the repository, then set:
+Render Blueprint from the repository, then set `CORS_ORIGINS` to the exact
+deployed frontend origin(s), without a path. For example:
 
 ```text
-CORS_ORIGINS=https://your-frontend.onrender.com
+CORS_ORIGINS=https://your-site.netlify.app
 ```
 
 For a separately hosted frontend, set its build-time variable:
@@ -59,7 +64,7 @@ Import the repository into Netlify and set:
 ```text
 Base directory: frontend
 Build command: npm run build
-Publish directory: frontend/out
+Publish directory: out
 ```
 
 Set the Netlify environment variable:
@@ -71,10 +76,55 @@ NEXT_PUBLIC_API_URL=https://your-backend.onrender.com
 After deployment, copy the exact Netlify site origin into Render's
 `CORS_ORIGINS` value. Include protocol, omit paths, and separate multiple
 origins with commas. Redeploy the backend after changing that variable.
+The free-audit form is collected by Netlify Forms; verify form detection is
+enabled and that a test submission appears in the Netlify dashboard. Local
+development does not store form submissions.
+
+## Scheduled scans, evidence storage, and alerts
+
+The Render Blueprint defines a daily cron worker. It checks active polygon
+sites and scans each one when its most recent scan is at least five days old.
+The daily check avoids calendar-month drift from a `*/5` cron expression;
+regular browser polling remains independent.
+
+Neo4j AuraDB remains the primary durable database. CSV is a local/recovery
+fallback and is not durable across Render redeploys. The cron worker requires
+the same `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, and `NEO4J_DATABASE`
+settings as the web service.
+
+The Render Blueprint selects Cloudflare R2. Configure these private service
+environment variables on both the web service and cron worker:
+
+- `CLOUDFLARE_R2_ACCOUNT_ID`
+- `CLOUDFLARE_R2_ACCESS_KEY_ID`
+- `CLOUDFLARE_R2_SECRET_ACCESS_KEY`
+- `CLOUDFLARE_R2_BUCKET`
+
+`EVIDENCE_STORAGE_PROVIDER=cloudflare-r2` stores historical/recent scan
+previews in R2; the API serves them through `/api/scans/{scan_id}/images/{kind}`.
+For local development, set `EVIDENCE_STORAGE_PROVIDER=local` (the default).
+If an R2 write fails during a live scan, the backend logs the failure and may
+serve a clearly marked cached result; it does not mark the new scan as fresh.
+
+Scheduled alerts use the Brevo transactional email API and one operator
+recipient. Configure these private variables on the cron worker:
+
+- `BREVO_API_KEY`
+- `BREVO_FROM_EMAIL`
+- `ALERT_TO_EMAIL`
+- Optional `BREVO_FROM_NAME` (defaults to `GeoSentinel AI`)
+
+An alert is queued only for a fresh scan with recorded cloud-mask coverage
+below 20%, a finding area of at least 1,000 m², and confidence of at least 80%.
+Notifications are recorded in Neo4j and retried after delivery failures.
+Recipients are global for this initial phase; do not put credentials in the
+repository or expose them through the frontend.
 
 ## Operational cadence
 
 - Browser polling: every ten minutes.
+- Scheduled polygon scans: no more often than every five days.
+- Render worker due-site check: daily at 03:00 UTC.
 - Catalog selection: up to eight newest scenes.
 - Catalog cloud filter: below 20%.
 - Expected Sentinel-2 revisit opportunity: approximately five days.
@@ -108,13 +158,13 @@ The **TRAIN CNN** button starts the same workflow as:
 python backend\train_model.py
 ```
 
-Set `TRAINING_ENABLED=true` and ensure prepared OSCD patches exist under
-`backend/data/oscd/` before starting training. The included Render Blueprint
-sets this to `true`, but deployment filesystems may not contain the large
-dataset, so training can fail until it is provisioned. The dashboard polls
-`/api/train` and reports completion or failure. Disable the variable again
-after training for a public production deployment. Do not expose this
-unauthenticated endpoint to an untrusted audience.
+The Render Blueprint sets `TRAINING_ENABLED=false`. In a trusted environment
+only, temporarily set it to `true` and ensure prepared OSCD patches exist under
+`backend/data/oscd/` before starting training. Deployment filesystems may not
+contain the large dataset, so provision it before enabling training. The
+dashboard polls `/api/train` and reports completion or failure. Set the value
+back to `false` after training. Do not expose this unauthenticated endpoint to
+an untrusted audience.
 
 ### Frontend cannot call the API
 
@@ -122,11 +172,12 @@ Check `NEXT_PUBLIC_API_URL`, the backend health endpoint, and `CORS_ORIGINS`.
 The CORS value must contain the exact scheme and host of the browser origin,
 without a path.
 
-### No durable history on Render
+### Scheduled scans or alerts are missing
 
-Render's default filesystem is ephemeral. Configure a persistent disk or
-replace CSV persistence with durable managed storage before relying on scan
-history operationally.
+Confirm the cron worker is deployed and check its job logs. Verify Neo4j,
+Cloudflare R2, and Brevo environment variables are configured on the cron
+service. Sites with a recent scan are intentionally skipped; alerts are not
+sent for cached, cloudy, or below-threshold results.
 
 ### Area name is a fallback
 
@@ -182,7 +233,11 @@ To migrate historical scans and findings from CSV to Neo4j:
 
 ## Evidence Storage
 
-In local development, image evidence and diff assets are stored under `backend/data/evidence/`. In production on Render, Render's default filesystem is ephemeral. Evidence assets should be stored in durable object storage (such as AWS S3, Google Cloud Storage, or Azure Blob Storage) with metadata records pointing to the durable URIs.
+Local evidence is stored under `backend/data/evidence/`. The Render Blueprint
+selects Cloudflare R2 for scan previews; configure the R2 variables listed
+above on both services. Render's local filesystem is ephemeral, so CSV
+recovery files and local media are not durable across redeploys. Neo4j remains
+the primary durable scan database.
 
 ## Rollback Strategy
 

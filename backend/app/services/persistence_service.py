@@ -217,7 +217,7 @@ def persist_scan(
     # 6. CSV best-effort (non-blocking)
     def _csv_write() -> None:
         try:
-            _csv_save_scan(result, source)
+            _csv_save_scan(result, source, scan_id=scan_id)
         except Exception as csv_exc:
             logger.warning("CSV fallback save failed (non-fatal): %s", csv_exc)
 

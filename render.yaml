@@ -12,7 +12,7 @@ services:
       - key: CORS_ORIGINS
         sync: false
       - key: TRAINING_ENABLED
-        value: "true"
+        value: "false"
       - key: NEO4J_URI
         sync: false
       - key: NEO4J_USERNAME
@@ -21,3 +21,49 @@ services:
         sync: false
       - key: NEO4J_DATABASE
         value: neo4j
+      - key: EVIDENCE_STORAGE_PROVIDER
+        value: cloudflare-r2
+      - key: CLOUDFLARE_R2_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_R2_ACCESS_KEY_ID
+        sync: false
+      - key: CLOUDFLARE_R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: CLOUDFLARE_R2_BUCKET
+        sync: false
+  - type: cron
+    name: geosentinel-scheduled-scans
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.worker.cron_scan
+    schedule: "0 3 * * *"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.11
+      - key: NEO4J_URI
+        sync: false
+      - key: NEO4J_USERNAME
+        sync: false
+      - key: NEO4J_PASSWORD
+        sync: false
+      - key: NEO4J_DATABASE
+        value: neo4j
+      - key: EVIDENCE_STORAGE_PROVIDER
+        value: cloudflare-r2
+      - key: CLOUDFLARE_R2_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_R2_ACCESS_KEY_ID
+        sync: false
+      - key: CLOUDFLARE_R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: CLOUDFLARE_R2_BUCKET
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: BREVO_FROM_EMAIL
+        sync: false
+      - key: BREVO_FROM_NAME
+        value: GeoSentinel AI
+      - key: ALERT_TO_EMAIL
+        sync: false

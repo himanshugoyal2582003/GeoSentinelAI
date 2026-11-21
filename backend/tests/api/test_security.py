@@ -42,7 +42,7 @@ class TestSecurityAndValidation:
         resp = client.post(
             "/api/detect",
             files=files,
-            data={"latitude": 999.0, "longitude": 73.85},
+            params={"latitude": 999.0, "longitude": 73.85},
         )
         assert resp.status_code == 422
 

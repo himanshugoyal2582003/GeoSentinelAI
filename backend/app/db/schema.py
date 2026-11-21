@@ -53,6 +53,11 @@ _CONSTRAINTS: list[tuple[str, str]] = [
         "CREATE CONSTRAINT case_id_unique IF NOT EXISTS "
         "FOR (c:InvestigationCase) REQUIRE c.case_id IS UNIQUE",
     ),
+    (
+        "notification_id_unique",
+        "CREATE CONSTRAINT notification_id_unique IF NOT EXISTS "
+        "FOR (n:Notification) REQUIRE n.notification_id IS UNIQUE",
+    ),
 ]
 
 # ---------------------------------------------------------------------------

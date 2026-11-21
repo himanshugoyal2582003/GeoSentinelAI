@@ -15,7 +15,10 @@ export default function HomePage() {
           <span className="brand-mark"><Crosshair size={19} /></span>
           <span className="landing-brand-copy"><strong>GeoSentinel AI</strong><small>Monitoring command center</small></span>
         </Link>
-        <Link className="landing-nav-link" href="/dashboard">Open predictions <ArrowUpRight size={15} /></Link>
+        <nav className="landing-nav" aria-label="Main navigation">
+          <Link className="landing-nav-link" href="/pricing">Pricing</Link>
+          <Link className="landing-nav-link" href="/dashboard">Open dashboard <ArrowUpRight size={15} /></Link>
+        </nav>
       </header>
 
       <motion.section
@@ -29,7 +32,7 @@ export default function HomePage() {
           <h1>From satellite pixels<br /><em>to actionable intelligence.</em></h1>
           <p className="hero-copy">Detecting suspicious land-use change before it disappears into the landscape.</p>
           <div className="landing-actions">
-            <Link className="landing-primary" href="/dashboard">View all predictions <ArrowRight size={16} /></Link>
+            <Link className="landing-primary" href="/pricing#free-audit">Request free site audit <ArrowRight size={16} /></Link>
             <a className="landing-secondary" href="#comparison">See scene comparison</a>
           </div>
         </div>
@@ -45,7 +48,7 @@ export default function HomePage() {
         <div><span>Region</span><strong>Pune quarry belt</strong></div>
         <div><span>Sensor</span><strong>Sentinel-2 / 10 m</strong></div>
         <div><span>Detection mode</span><strong>ChangeCNN + differencing</strong></div>
-        <div><span>Auto monitoring</span><strong>Every 10 minutes</strong></div>
+        <div><span>Scheduled site checks</span><strong>At least 5 days apart</strong></div>
         <Link href="/dashboard">Dashboard <ArrowUpRight size={14} /></Link>
       </section>
 
@@ -54,6 +57,7 @@ export default function HomePage() {
       <footer className="landing-footer">
         <span>GeoSentinel / Pune region</span>
         <span>Detection is an intelligence signal; verify field conditions before enforcement.</span>
+        <Link href="/pricing">Pricing & free audit <ArrowUpRight size={14} /></Link>
       </footer>
     </main>
   );
