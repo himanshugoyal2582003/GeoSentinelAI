@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -9,23 +10,46 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 from urllib.error import HTTPError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
+from uuid import uuid4
 
 import numpy as np
-from fastapi import FastAPI, File, HTTPException, UploadFile
+import torch
+from dotenv import load_dotenv
+from fastapi import FastAPI, File, Header, HTTPException, Response, UploadFile
+from fastapi import Request as FastAPIRequest
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
-import torch
-from dotenv import load_dotenv
 
+from .api.findings import router as findings_router
+from .api.graph import router as graph_router
+
+# Import sub-routers
+from .api.health import router as health_router
+from .api.investigations import router as investigations_router
+from .api.scans import router as scans_router
 from .change_model import load_model
-from .history import read_scans, save_scan
+from .db.neo4j import get_driver, neo4j_lifespan
+from .history import save_scan
+from .services.detection_service import (
+    validate_coordinates,
+    validate_image_pair,
+    validate_pixel_size,
+)
+from .services.persistence_service import persist_scan
+
+logger = logging.getLogger(__name__)
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
-app = FastAPI(title="GeoSentinel AI API", version="0.1.0")
+
+app = FastAPI(
+    title="GeoSentinel AI API",
+    version="0.2.0",
+    lifespan=neo4j_lifespan,
+)
 
 
 def _cors_origins() -> list[str]:
@@ -45,6 +69,23 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def add_correlation_id(request: FastAPIRequest, call_next):
+    correlation_id = request.headers.get("X-Request-ID") or str(uuid4())
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = correlation_id
+    return response
+
+
+# Include modular routers
+app.include_router(health_router)
+app.include_router(scans_router)
+app.include_router(findings_router)
+app.include_router(investigations_router)
+app.include_router(graph_router)
+
 MEDIA_DIR = Path(__file__).resolve().parents[1] / "data" / "live"
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_FILE = MEDIA_DIR / "last-result.json"
@@ -57,11 +98,6 @@ MODEL_PATH = str(Path(__file__).resolve().parents[1] / "models" / "change_cnn.pt
 CHANGE_MODEL = load_model(MODEL_PATH)
 TRAINING_STATE: dict[str, Any] = {"status": "idle", "message": "Training has not been started."}
 TRAINING_LOCK = threading.Lock()
-
-
-@app.get("/api/health")
-def health() -> dict[str, str]:
-    return {"status": "ok", "service": "geosentinel-api", "model": "ChangeCNN" if CHANGE_MODEL else "difference-fallback"}
 
 
 @app.get("/api/model")
@@ -117,11 +153,6 @@ def train_model() -> dict[str, Any]:
         TRAINING_STATE.update({"status": "running", "message": "CNN training is running."})
     threading.Thread(target=_run_training, daemon=True).start()
     return dict(TRAINING_STATE)
-
-
-@app.get("/api/scans")
-def scans() -> dict[str, Any]:
-    return {"scans": read_scans()}
 
 
 def _components(mask: np.ndarray, min_pixels: int = 20) -> list[tuple[int, int, int, int, int]]:
@@ -317,7 +348,6 @@ def _read_live_cache() -> dict[str, Any] | None:
 
 
 def _live_scenes() -> list[dict[str, Any]]:
-    # POST is used because the STAC API's query syntax is more reliable in JSON.
     payload = json.dumps({
         "collections": ["sentinel-2-l2a"],
         "bbox": list(STATIC_BBOX),
@@ -386,9 +416,8 @@ def _add_area_names(findings: list[dict[str, Any]]) -> None:
         finding["areaName"] = _area_name(latitude, longitude)
 
 
-@app.get("/api/live-detect")
-def live_detect() -> dict[str, Any]:
-    """Fetch the two newest low-cloud public scenes at the static Pune location and infer changes."""
+def _execute_live_detect(idempotency_key: str | None = None) -> dict[str, Any]:
+    """Internal implementation of live detection."""
     try:
         scenes = _live_scenes()
         image_bytes = {scene["id"]: _signed_preview(scene) for scene in scenes}
@@ -413,7 +442,6 @@ def live_detect() -> dict[str, Any]:
         )
         _add_area_names(result["findings"])
         timeline = []
-        historical_image = np.asarray(Image.open(io.BytesIO(historical_bytes)).convert("RGB"), dtype=np.float32)
         for previous, current in zip(scenes, scenes[1:]):
             pair_result = _analyse_pair(
                 np.asarray(Image.open(io.BytesIO(image_bytes[previous["id"]])).convert("RGB"), dtype=np.float32),
@@ -447,7 +475,21 @@ def live_detect() -> dict[str, Any]:
             "sceneDates": [scene["properties"]["datetime"][:10] for scene in scenes],
             "note": "Public satellite imagery; detections are intelligence signals, not legal determinations.",
         }
-        result["scanId"] = save_scan(result, result["source"])
+
+        # Persist to Neo4j (and CSV fallback)
+        try:
+            scan_id = persist_scan(
+                get_driver(),
+                result,
+                result["source"],
+                "live-sentinel2",
+                idempotency_key=idempotency_key,
+            )
+            result["scanId"] = scan_id
+        except Exception as exc:
+            logger.warning("Neo4j persistence failed, saving via CSV fallback: %s", exc)
+            result["scanId"] = save_scan(result, result["source"])
+
         CACHE_FILE.write_text(json.dumps(result), encoding="utf-8")
         return result
     except HTTPException:
@@ -467,6 +509,24 @@ def live_detect() -> dict[str, Any]:
         raise HTTPException(status_code=502, detail=f"Live Sentinel-2 acquisition failed: {exc}") from exc
 
 
+@app.post("/api/live-detect")
+def live_detect_post(
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
+    """Preferred endpoint for live satellite acquisition, analysis, and graph persistence."""
+    return _execute_live_detect(idempotency_key=idempotency_key)
+
+
+@app.get("/api/live-detect")
+def live_detect(
+    response: Response,
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
+    """Backward-compatible GET endpoint for live detection (deprecated; use POST)."""
+    response.headers["X-Deprecated"] = "Use POST /api/live-detect instead"
+    return _execute_live_detect(idempotency_key=idempotency_key)
+
+
 @app.post("/api/detect")
 async def detect(
     historical: UploadFile = File(...),
@@ -474,18 +534,29 @@ async def detect(
     latitude: float = 18.5204,
     longitude: float = 73.8567,
     pixel_size_m: float = 10,
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> dict[str, Any]:
+    # 1. Geographic input validation
+    validate_coordinates(latitude, longitude)
+    validate_pixel_size(pixel_size_m)
+
+    # 2. Image reading & dimension validation
     try:
-        old_image = np.asarray(Image.open(io.BytesIO(await historical.read())).convert("RGB"), dtype=np.float32)
-        new_image = np.asarray(Image.open(io.BytesIO(await recent.read())).convert("RGB"), dtype=np.float32)
+        hist_bytes = await historical.read()
+        recent_bytes = await recent.read()
+        if len(hist_bytes) == 0 or len(recent_bytes) == 0:
+            raise HTTPException(status_code=400, detail="Uploaded images must not be empty.")
+        old_image = np.asarray(Image.open(io.BytesIO(hist_bytes)).convert("RGB"), dtype=np.float32)
+        new_image = np.asarray(Image.open(io.BytesIO(recent_bytes)).convert("RGB"), dtype=np.float32)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Both files must be readable RGB images.") from exc
-    if old_image.shape != new_image.shape:
-        raise HTTPException(status_code=400, detail="Historical and recent images must have identical dimensions.")
-    if old_image.shape[0] * old_image.shape[1] > 4_000_000:
-        raise HTTPException(status_code=413, detail="Images must be at most 4 megapixels for this MVP.")
 
-    return _analyse_pair(
+    validate_image_pair(old_image, new_image)
+
+    # 3. Process detection
+    result = _analyse_pair(
         old_image,
         new_image,
         latitude,
@@ -495,3 +566,34 @@ async def detect(
         "Historical upload",
         "Recent upload",
     )
+    _add_area_names(result["findings"])
+
+    source = {
+        "provider": "User upload",
+        "bbox": [
+            round(longitude - 0.04, 6),
+            round(latitude - 0.04, 6),
+            round(longitude + 0.04, 6),
+            round(latitude + 0.04, 6),
+        ],
+        "historicalItem": historical.filename or "historical_upload",
+        "recentItem": recent.filename or "recent_upload",
+        "note": "User-uploaded image pair",
+    }
+    result["source"] = source
+
+    # 4. Persist to Neo4j (and CSV fallback)
+    try:
+        scan_id = persist_scan(
+            get_driver(),
+            result,
+            source,
+            "upload",
+            idempotency_key=idempotency_key,
+        )
+        result["scanId"] = scan_id
+    except Exception as exc:
+        logger.warning("Neo4j persistence failed for upload, saving via CSV fallback: %s", exc)
+        result["scanId"] = save_scan(result, source)
+
+    return result

@@ -137,3 +137,55 @@ Detections are spectral surface-change signals. They can be caused by clouds,
 seasonality, registration errors, construction, agriculture, quarry activity,
 or other land-use changes. Review imagery, permits, and field evidence before
 enforcement or public claims.
+
+
+## Neo4j AuraDB Setup
+
+1. Create a free or paid instance on [Neo4j AuraDB](https://neo4j.com/cloud/platform/aura-graph-database/).
+2. Note the generated connection URI (e.g., `bolt+s://<instance-id>.databases.neo4j.io`), username (`neo4j`), and password.
+3. Configure these environment variables in your backend `.env` or deployment platform:
+   - `NEO4J_URI`
+   - `NEO4J_USERNAME`
+   - `NEO4J_PASSWORD`
+   - `NEO4J_DATABASE` (default: `neo4j`)
+4. Verify connectivity using `GET /api/health/ready`.
+
+## Schema Initialization
+
+Run the idempotent schema initializer before first using Neo4j:
+
+```powershell
+python scripts/init_neo4j_schema.py
+```
+
+This creates uniqueness constraints and spatial point indexes on `FindingObservation.location`. It is safe to run repeatedly.
+
+## CSV Migration and Verification
+
+To migrate historical scans and findings from CSV to Neo4j:
+
+1. **Perform a dry run first**:
+   ```powershell
+   python scripts/migrate_csv_to_neo4j.py --dry-run
+   ```
+2. **Execute the migration**:
+   ```powershell
+   python scripts/migrate_csv_to_neo4j.py
+   ```
+3. **Verify graph data integrity**:
+   ```powershell
+   python scripts/verify_migration.py
+   ```
+
+## Evidence Storage
+
+In local development, image evidence and diff assets are stored under `backend/data/evidence/`. In production on Render, Render's default filesystem is ephemeral. Evidence assets should be stored in durable object storage (such as AWS S3, Google Cloud Storage, or Azure Blob Storage) with metadata records pointing to the durable URIs.
+
+## Rollback Strategy
+
+If a migration run needs to be rolled back:
+```cypher
+MATCH (s:Scan {mode: 'historical-csv'}) DETACH DELETE s
+MATCH (fo:FindingObservation {review_status: 'migrated'}) DETACH DELETE fo
+```
+The original CSV files (`scans.csv`, `findings.csv`) are never deleted or modified by migration tools.

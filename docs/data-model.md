@@ -71,3 +71,73 @@ The cache allows graceful display after provider rate limiting. Render's
 default filesystem is ephemeral; CSV history and cache should be moved to a
 persistent disk or external database for production retention.
 
+## Neo4j Graph Model
+
+GeoSentinel persists findings and investigations in a Neo4j AuraDB graph
+database. The CSV files remain as a backup/audit trail; Neo4j is the primary
+queryable store.
+
+### Node types (6)
+
+| Label | Key property | Description |
+|---|---|---|
+| `MonitoringRegion` | `region_id` | A named geographic area that is scanned. Stores `name`, `bbox` (list), `created_at`. |
+| `Scan` | `scan_id` | One complete satellite acquisition and analysis run. Stores `created_at`, `mode` (`live`/`upload`), `region_id`, `historical_date`, `recent_date`, `changed_area_sqm`, `finding_count`, `model_name`, `processing_metadata` (JSON string), `summary` (JSON string), `source_metadata` (JSON string), `status`, `idempotency_key` (optional). |
+| `SatelliteScene` | `scene_id` | A single acquired satellite scene (Sentinel-2). Stores `provider`, `acquired_at`, `cloud_cover` (float, optional), `asset_metadata` (JSON string), `created_at`. |
+| `FindingObservation` | `detection_id` | A detected change component from one scan. Stores `original_finding_id`, `scan_id`, `label`, `severity` (`high`/`medium`/`low`), `confidence` (0–1), `area_sqm`, `location` (spatial Point, see below), `first_observed`, `last_observed`, `change_type`, `model_score` (optional), `detection_error_sqm`, `region_bbox` (JSON string), `review_status`, `created_at`. |
+| `EvidenceAsset` | `asset_id` | Metadata record for a saved evidence file (image, report). Stores `uri`, `sha256`, `media_type`, `file_size` (bytes), `asset_type`, `created_at`. **Image bytes are NOT stored in Neo4j**; `uri` points to external or local file storage. |
+| `InvestigationCase` | `case_id` | A human-managed review case. Stores `title`, `status`, `review_status`, `created_at`, `updated_at`, `description`. |
+
+### Relationships (5)
+
+| Relationship | Direction | Meaning |
+|---|---|---|
+| `(:MonitoringRegion)-[:HAS_SCAN]->(:Scan)` | Region → Scan | Links a scan to the region it monitored. |
+| `(:Scan)-[:DETECTED]->(:FindingObservation)` | Scan → Finding | Links each detected component to its originating scan. |
+| `(:Scan)-[:USED_SCENE]->(:SatelliteScene)` | Scan → Scene | Records which satellite scenes were used in the scan. |
+| `(:FindingObservation)-[:HAS_EVIDENCE]->(:EvidenceAsset)` | Finding → Asset | Links evidence files (images, reports) to a finding. |
+| `(:InvestigationCase)-[:INVESTIGATES]->(:FindingObservation)` | Case → Finding | Associates an investigation case with one or more findings. |
+
+### Spatial points (WGS-84)
+
+`FindingObservation.location` is stored as a Neo4j `point` using WGS-84
+coordinates:
+
+```cypher
+point({longitude: <lon>, latitude: <lat>, srid: 4326})
+```
+
+Neo4j uses `longitude` as the X axis and `latitude` as the Y axis. Coordinates
+come from the centroid of the detected changed-pixel bounding box, converted
+from preview-pixel space to geographic space using the monitoring region's
+bounding box. These are estimates suitable for map display, not survey-grade
+measurements.
+
+A spatial index on `FindingObservation.location` supports `point.distance()`
+proximity queries.
+
+### Evidence asset storage note
+
+Evidence asset files (PNG images, JSON reports) are **not** stored inside
+Neo4j. The `EvidenceAsset` node contains metadata only: `uri`, `sha256`,
+`media_type`, `file_size`, and `asset_type`. In local development files are
+written under `backend/data/evidence/`. In production, use external durable
+storage (S3, GCS, or similar) because Render's default filesystem is ephemeral.
+
+### Idempotency and MERGE strategy
+
+All writes use Cypher `MERGE` on the unique key property so that retrying a
+failed request does not create duplicate nodes:
+
+```cypher
+MERGE (s:Scan {scan_id: $scan_id})
+ON CREATE SET s += $props
+ON MATCH SET s.updated_at = $now
+```
+
+`Scan.idempotency_key` (optional) allows callers to supply their own
+deduplication key. The schema enforces a `UNIQUE` constraint on this property
+when present. All constraints and indexes are created by
+`python scripts/init_neo4j_schema.py` and are idempotent (`CREATE CONSTRAINT IF
+NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`).
+

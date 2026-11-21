@@ -28,6 +28,16 @@ timeline summaries, and downloadable case reports.
 
 ![GeoSentinel scan workflow](./docs/img/Screenshot%202026-11-02%20211700.png)
 
+## Neo4j Graph Integration
+
+GeoSentinelAI integrates with Neo4j (AuraDB or local instance) for transactional graph persistence, spatial indexing of quarry change findings, and investigation case management:
+
+- **Graph Entities**: `MonitoringRegion`, `Scan`, `SatelliteScene`, `FindingObservation`, `EvidenceAsset`, `InvestigationCase`.
+- **Spatial Queries**: Point index on WGS-84 coordinates for spatial proximity queries (`point.distance`).
+- **Investigation Intelligence**: Linking multi-temporal observations without premature auto-merging.
+- **CSV Migration**: Built-in dry-run, execution, and verification utilities (`backend/scripts/`).
+- **Resilience**: Automatic fallback to CSV and graceful degradation if Neo4j is temporarily unreachable.
+
 ## Installation and local setup
 
 ### Prerequisites
