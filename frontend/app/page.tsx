@@ -84,6 +84,7 @@ export default function Home() {
   const [trainingMessage, setTrainingMessage] = useState("");
   const [nextScanAt, setNextScanAt] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const waitingForDashboard = loading || (liveScanning && !data);
 
   function applyLiveResult(value: Dataset) {
     setData(value);
@@ -212,8 +213,6 @@ export default function Home() {
     URL.revokeObjectURL(url);
   }
 
-  if (loading) return <main className="loading">Loading GeoSentinel command center...</main>;
-
   return (
     <main>
       <header className="topbar">
@@ -227,16 +226,16 @@ export default function Home() {
           </div>
         </div>
         <div className="top-actions">
-          <span className="live-dot" /> SYSTEM OPERATIONAL
-          <button className="live-button" onClick={runLiveScan} disabled={liveScanning}>
-            <Waves size={15} /> {liveScanning ? "SCANNING..." : "LIVE SATELLITE SCAN"}
+          <span className="live-dot" /> {waitingForDashboard || liveScanning ? "SCANNING SATELLITE FEED" : "SYSTEM OPERATIONAL"}
+          <button className="live-button" onClick={runLiveScan} disabled={waitingForDashboard || liveScanning}>
+            <Waves size={15} /> {waitingForDashboard || liveScanning ? "SCANNING..." : "LIVE SATELLITE SCAN"}
           </button>
-          <button className="live-button" onClick={trainCnn} disabled={training}>
+          <button className="live-button" onClick={trainCnn} disabled={training || waitingForDashboard}>
             <BrainCircuit size={15} /> {training ? "TRAINING..." : "TRAIN CNN"}
           </button>
-          <label className={`upload-button ${uploading ? "disabled" : ""}`}>
+          <label className={`upload-button ${uploading || waitingForDashboard ? "disabled" : ""}`}>
             <Upload size={15} /> {uploading ? "PROCESSING..." : "UPLOAD PAIR"}
-            <input type="file" accept="image/*" multiple onChange={handleUpload} disabled={uploading} />
+            <input type="file" accept="image/*" multiple onChange={handleUpload} disabled={uploading || waitingForDashboard} />
           </label>
         </div>
       </header>
@@ -255,10 +254,28 @@ export default function Home() {
           <Waves size={16} />
           <span>MONITORING WINDOW</span>
           <strong>
-            {data?.historicalDate} <b>→</b> {data?.recentDate}
+            {data ? (
+              <>
+                {data.historicalDate} <b>→</b> {data.recentDate}
+              </>
+            ) : waitingForDashboard ? (
+              "Awaiting live scan"
+            ) : (
+              "No scan available"
+            )}
           </strong>
         </div>
       </section>
+
+      {waitingForDashboard && (
+        <section className="dashboard-loading" role="status" aria-live="polite">
+          <span className="loading-spinner" aria-hidden="true" />
+          <div>
+            <strong>Preparing your dashboard</strong>
+            <p>The hero is ready. Live satellite findings will appear here when the scan completes.</p>
+          </div>
+        </section>
+      )}
 
       {error && (
         <div className="error">
@@ -275,246 +292,250 @@ export default function Home() {
         </div>
       )}
 
-      <section className="controls">
-        <div>
-          <span className="control-label">REGION</span>
-          <strong>
-            <MapPin size={15} /> {data?.region}
-          </strong>
-        </div>
-        <div>
-          <span className="control-label">SENSOR</span>
-          <strong>Sentinel-2 / 10m</strong>
-        </div>
-        <div>
-          <span className="control-label">DETECTION MODE</span>
-          <strong>ChangeCNN + differencing</strong>
-        </div>
-        <div>
-          <span className="control-label">AUTO MONITORING</span>
-          <strong>Every 10 minutes</strong>
-          <small>{nextScanAt ? `Next scan ${new Date(nextScanAt).toLocaleTimeString()}` : "Starting..."}</small>
-        </div>
-        <div className="demo-badge">{data?.source ? "LIVE SATELLITE" : "DEMO DATASET"}</div>
-      </section>
-
-      {data?.source && (
-        <section className="satellite-compare">
-          <div className="satellite-head">
+      {!waitingForDashboard && data && (
+        <>
+          <section className="controls">
             <div>
-              <span className="eyebrow">LIVE EVIDENCE / STATIC MONITORING LOCATION</span>
-              <h2>Satellite comparison</h2>
-              <p>
-                {data.source.provider} · {data.source.sceneCount || 0} scenes · approximately 5-day Sentinel-2 revisit · BBOX{" "}
-                {data.source.bbox.join(", ")}
-              </p>
+              <span className="control-label">REGION</span>
+              <strong>
+                <MapPin size={15} /> {data?.region}
+              </strong>
             </div>
-            <span className="live-tag">{data.source.stale ? "CACHED REAL FEED" : "LIVE FEED"}</span>
-          </div>
-          <div className="satellite-images">
-            <figure>
-              <img src={resolveImageUrl(data.source.historicalImage)} alt="Historical Sentinel-2 scene" />
-              <figcaption>HISTORICAL / {data.historicalDate}</figcaption>
-            </figure>
-            <div className="compare-arrow">→</div>
-            <figure>
-              <img src={resolveImageUrl(data.source.recentImage)} alt="Recent Sentinel-2 scene" />
-              <figcaption>RECENT / {data.recentDate}</figcaption>
-            </figure>
-          </div>
-          {data.source.note && <p className="cache-note">{data.source.note}</p>}
-        </section>
-      )}
-
-      <section className="kpis">
-        <Kpi
-          label="CHANGED AREA"
-          value={`${data?.summary.changedAreaHa ?? 0} ha`}
-          detail={`${(data?.summary.changedAreaSqm ?? 0).toLocaleString()} m² mapped`}
-          icon={<ArrowUpRight />}
-        />
-        <Kpi
-          label="HIGH-RISK FINDINGS"
-          value={String(data?.summary.highRiskCount ?? 0).padStart(2, "0")}
-          detail="Requires field verification"
-          icon={<AlertTriangle />}
-          alert
-        />
-        <Kpi
-          label="MODEL CONFIDENCE"
-          value={`${Math.round((data?.summary.averageConfidence || 0) * 100)}%`}
-          detail="Across detected regions"
-          icon={<Crosshair />}
-        />
-        <Kpi
-          label="CASE FILES"
-          value={String(data?.findings.length ?? 0).padStart(2, "0")}
-          detail="Evidence packages ready"
-          icon={<FileText />}
-        />
-      </section>
-
-      <section className="workspace">
-        <div className="panel map-panel">
-          <div className="panel-head">
             <div>
-              <span className="eyebrow">SPATIAL OVERVIEW</span>
-              <h2>Live change map</h2>
+              <span className="control-label">SENSOR</span>
+              <strong>Sentinel-2 / 10m</strong>
             </div>
-            <span className="map-legend">
-              <i className="legend-dot high" /> HIGH RISK <i className="legend-dot medium" /> REVIEW
-            </span>
-          </div>
-          <LiveMap data={data} onSelect={setSelected} />
-        </div>
-
-        <div className="panel findings-panel">
-          <div className="panel-head">
             <div>
-              <span className="eyebrow">DETECTION QUEUE</span>
-              <h2>
-                Flagged regions <small>{data?.findings.length || 0}</small>
-              </h2>
+              <span className="control-label">DETECTION MODE</span>
+              <strong>ChangeCNN + differencing</strong>
             </div>
-            <button
-              className="text-button"
-              onClick={() => {
-                const list = document.querySelector(".findings-list");
-                list?.scrollTo({ top: 0, behavior: "smooth" });
-              }}
-            >
-              VIEW ALL <ArrowUpRight size={14} />
-            </button>
-          </div>
-          <div className="findings-list">
-            {(data?.findings || []).map((finding, index) => (
-              <button
-                className={`finding ${selected?.id === finding.id ? "selected" : ""}`}
-                key={finding.id}
-                onClick={() => setSelected(finding)}
-              >
-                <span className={`finding-index ${finding.severity}`}>{String(index + 1).padStart(2, "0")}</span>
-                <span className="finding-main">
-                  <strong>{finding.areaName || finding.label}</strong>
-                  <small>
-                    {finding.changeType} · {finding.coordinates.join(", ")}
-                  </small>
-                </span>
-                <span className="finding-area">{(finding.areaSqm / 10000).toFixed(2)} ha</span>
-                <ArrowUpRight size={16} />
-              </button>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="lower-grid">
-        <div className="panel timeline-panel">
-          <div className="panel-head">
             <div>
-              <span className="eyebrow">TEMPORAL ANALYSIS</span>
-              <h2>Expansion trajectory</h2>
+              <span className="control-label">AUTO MONITORING</span>
+              <strong>Every 10 minutes</strong>
+              <small>{nextScanAt ? `Next scan ${new Date(nextScanAt).toLocaleTimeString()}` : "Starting..."}</small>
             </div>
-            <span className="unit">AREA / M²</span>
-          </div>
-          <p className="timeline-note">{data?.timelineNote || "Historical scene baseline compared with the recent scene."}</p>
-          <div className="trajectory-chart">
-            {(data?.timeline || []).map((item) => (
-              <div className="trajectory-column" key={item.month}>
-                <strong>{item.areaSqm.toLocaleString()}</strong>
-                <div className="trajectory-track">
-                  <div className="trajectory-bar" style={{ height: `${chartHeight(item.areaSqm)}px` }} />
+            <div className="demo-badge">{data?.source ? "LIVE SATELLITE" : "DEMO DATASET"}</div>
+          </section>
+
+          {data?.source && (
+            <section className="satellite-compare">
+              <div className="satellite-head">
+                <div>
+                  <span className="eyebrow">LIVE EVIDENCE / STATIC MONITORING LOCATION</span>
+                  <h2>Satellite comparison</h2>
+                  <p>
+                    {data.source.provider} · {data.source.sceneCount || 0} scenes · approximately 5-day Sentinel-2 revisit · BBOX{" "}
+                    {data.source.bbox.join(", ")}
+                  </p>
                 </div>
-                <span>{item.month}</span>
+                <span className="live-tag">{data.source.stale ? "CACHED REAL FEED" : "LIVE FEED"}</span>
               </div>
-            ))}
-          </div>
-          <div className="area-breakdown">
-            <div className="breakdown-title">DETECTED REGION AREA</div>
-            {(data?.areaBreakdown || []).map((item, index) => (
-              <button
-                className="breakdown-row"
-                key={`${item.label}-${index}`}
-                onClick={() => {
-                  const match = data?.findings[index];
-                  if (match) setSelected(match);
-                }}
-              >
-                <span className={`breakdown-dot ${item.severity}`} />
-                <strong>
-                  {String(index + 1).padStart(2, "0")} {data?.findings[index]?.areaName || item.label}
-                </strong>
-                <b>{item.areaSqm.toLocaleString()} m²</b>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="panel case-panel">
-          <div className="panel-head">
-            <div>
-              <span className="eyebrow">EVIDENCE PACKAGE</span>
-              <h2>Case file</h2>
-            </div>
-            <FileText size={18} />
-          </div>
-          {selected ? (
-            <div className="case-content">
-              <div className="case-id">
-                {selected.id}
-                <span className={`severity ${selected.severity}`}>{selected.severity.toUpperCase()}</span>
+              <div className="satellite-images">
+                <figure>
+                  <img src={resolveImageUrl(data.source.historicalImage)} alt="Historical Sentinel-2 scene" />
+                  <figcaption>HISTORICAL / {data.historicalDate}</figcaption>
+                </figure>
+                <div className="compare-arrow">→</div>
+                <figure>
+                  <img src={resolveImageUrl(data.source.recentImage)} alt="Recent Sentinel-2 scene" />
+                  <figcaption>RECENT / {data.recentDate}</figcaption>
+                </figure>
               </div>
-              <h3>{selected.areaName || selected.label}</h3>
-              <p>
-                Surface change detected between observation windows. The signal should be verified against permits and field conditions
-                before enforcement.
-              </p>
-              <div className="case-meta">
-                <span>
-                  <MapPin size={14} /> {selected.coordinates.join(", ")}
-                </span>
-                <span>
-                  <CalendarDays size={14} /> {selected.lastObserved}
-                </span>
-              </div>
-              <div className="evidence-grid">
-                <span>
-                  FLAGGED AREA <b>{selected.areaSqm.toLocaleString()} m²</b>
-                </span>
-                <span>
-                  EST. ERROR <b>±{(selected.detectionErrorSqm || 0).toLocaleString()} m²</b>
-                </span>
-                <span>
-                  REGION BBOX <b>{selected.regionBbox?.join(", ") || "Unavailable"}</b>
-                </span>
-                <span>
-                  MODEL SCORE <b>{selected.modelScore ? `${Math.round(selected.modelScore * 100)}%` : "Unavailable"}</b>
-                </span>
-              </div>
-              <div className="case-links">
-                {selected.googleMapsUrl && (
-                  <a href={selected.googleMapsUrl} target="_blank" rel="noreferrer">
-                    OPEN GOOGLE MAPS <ArrowUpRight size={14} />
-                  </a>
-                )}
-                <a href={getSatelliteUrl(selected)} target="_blank" rel="noreferrer">
-                  SATELLITE VIEW <ArrowUpRight size={14} />
-                </a>
-              </div>
-              <button className="generate-button" onClick={downloadReport}>
-                DOWNLOAD FULL REPORT <ArrowUpRight size={15} />
-              </button>
-            </div>
-          ) : (
-            <p className="empty">Select a flagged region to inspect its evidence package.</p>
+              {data.source.note && <p className="cache-note">{data.source.note}</p>}
+            </section>
           )}
-        </div>
-      </section>
 
-      <footer>
-        <span>GEOSENTINEL AI / HACKFRONT INDIA 2026</span>
-        <span>Detection is an intelligence signal, not a legal determination.</span>
-      </footer>
+          <section className="kpis">
+            <Kpi
+              label="CHANGED AREA"
+              value={`${data?.summary.changedAreaHa ?? 0} ha`}
+              detail={`${(data?.summary.changedAreaSqm ?? 0).toLocaleString()} m² mapped`}
+              icon={<ArrowUpRight />}
+            />
+            <Kpi
+              label="HIGH-RISK FINDINGS"
+              value={String(data?.summary.highRiskCount ?? 0).padStart(2, "0")}
+              detail="Requires field verification"
+              icon={<AlertTriangle />}
+              alert
+            />
+            <Kpi
+              label="MODEL CONFIDENCE"
+              value={`${Math.round((data?.summary.averageConfidence || 0) * 100)}%`}
+              detail="Across detected regions"
+              icon={<Crosshair />}
+            />
+            <Kpi
+              label="CASE FILES"
+              value={String(data?.findings.length ?? 0).padStart(2, "0")}
+              detail="Evidence packages ready"
+              icon={<FileText />}
+            />
+          </section>
+
+          <section className="workspace">
+            <div className="panel map-panel">
+              <div className="panel-head">
+                <div>
+                  <span className="eyebrow">SPATIAL OVERVIEW</span>
+                  <h2>Live change map</h2>
+                </div>
+                <span className="map-legend">
+                  <i className="legend-dot high" /> HIGH RISK <i className="legend-dot medium" /> REVIEW
+                </span>
+              </div>
+              <LiveMap data={data} onSelect={setSelected} />
+            </div>
+
+            <div className="panel findings-panel">
+              <div className="panel-head">
+                <div>
+                  <span className="eyebrow">DETECTION QUEUE</span>
+                  <h2>
+                    Flagged regions <small>{data?.findings.length || 0}</small>
+                  </h2>
+                </div>
+                <button
+                  className="text-button"
+                  onClick={() => {
+                    const list = document.querySelector(".findings-list");
+                    list?.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                >
+                  VIEW ALL <ArrowUpRight size={14} />
+                </button>
+              </div>
+              <div className="findings-list">
+                {(data?.findings || []).map((finding, index) => (
+                  <button
+                    className={`finding ${selected?.id === finding.id ? "selected" : ""}`}
+                    key={finding.id}
+                    onClick={() => setSelected(finding)}
+                  >
+                    <span className={`finding-index ${finding.severity}`}>{String(index + 1).padStart(2, "0")}</span>
+                    <span className="finding-main">
+                      <strong>{finding.areaName || finding.label}</strong>
+                      <small>
+                        {finding.changeType} · {finding.coordinates.join(", ")}
+                      </small>
+                    </span>
+                    <span className="finding-area">{(finding.areaSqm / 10000).toFixed(2)} ha</span>
+                    <ArrowUpRight size={16} />
+                  </button>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          <section className="lower-grid">
+            <div className="panel timeline-panel">
+              <div className="panel-head">
+                <div>
+                  <span className="eyebrow">TEMPORAL ANALYSIS</span>
+                  <h2>Expansion trajectory</h2>
+                </div>
+                <span className="unit">AREA / M²</span>
+              </div>
+              <p className="timeline-note">{data?.timelineNote || "Historical scene baseline compared with the recent scene."}</p>
+              <div className="trajectory-chart">
+                {(data?.timeline || []).map((item) => (
+                  <div className="trajectory-column" key={item.month}>
+                    <strong>{item.areaSqm.toLocaleString()}</strong>
+                    <div className="trajectory-track">
+                      <div className="trajectory-bar" style={{ height: `${chartHeight(item.areaSqm)}px` }} />
+                    </div>
+                    <span>{item.month}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="area-breakdown">
+                <div className="breakdown-title">DETECTED REGION AREA</div>
+                {(data?.areaBreakdown || []).map((item, index) => (
+                  <button
+                    className="breakdown-row"
+                    key={`${item.label}-${index}`}
+                    onClick={() => {
+                      const match = data?.findings[index];
+                      if (match) setSelected(match);
+                    }}
+                  >
+                    <span className={`breakdown-dot ${item.severity}`} />
+                    <strong>
+                      {String(index + 1).padStart(2, "0")} {data?.findings[index]?.areaName || item.label}
+                    </strong>
+                    <b>{item.areaSqm.toLocaleString()} m²</b>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="panel case-panel">
+              <div className="panel-head">
+                <div>
+                  <span className="eyebrow">EVIDENCE PACKAGE</span>
+                  <h2>Case file</h2>
+                </div>
+                <FileText size={18} />
+              </div>
+              {selected ? (
+                <div className="case-content">
+                  <div className="case-id">
+                    {selected.id}
+                    <span className={`severity ${selected.severity}`}>{selected.severity.toUpperCase()}</span>
+                  </div>
+                  <h3>{selected.areaName || selected.label}</h3>
+                  <p>
+                    Surface change detected between observation windows. The signal should be verified against permits and field conditions
+                    before enforcement.
+                  </p>
+                  <div className="case-meta">
+                    <span>
+                      <MapPin size={14} /> {selected.coordinates.join(", ")}
+                    </span>
+                    <span>
+                      <CalendarDays size={14} /> {selected.lastObserved}
+                    </span>
+                  </div>
+                  <div className="evidence-grid">
+                    <span>
+                      FLAGGED AREA <b>{selected.areaSqm.toLocaleString()} m²</b>
+                    </span>
+                    <span>
+                      EST. ERROR <b>±{(selected.detectionErrorSqm || 0).toLocaleString()} m²</b>
+                    </span>
+                    <span>
+                      REGION BBOX <b>{selected.regionBbox?.join(", ") || "Unavailable"}</b>
+                    </span>
+                    <span>
+                      MODEL SCORE <b>{selected.modelScore ? `${Math.round(selected.modelScore * 100)}%` : "Unavailable"}</b>
+                    </span>
+                  </div>
+                  <div className="case-links">
+                    {selected.googleMapsUrl && (
+                      <a href={selected.googleMapsUrl} target="_blank" rel="noreferrer">
+                        OPEN GOOGLE MAPS <ArrowUpRight size={14} />
+                      </a>
+                    )}
+                    <a href={getSatelliteUrl(selected)} target="_blank" rel="noreferrer">
+                      SATELLITE VIEW <ArrowUpRight size={14} />
+                    </a>
+                  </div>
+                  <button className="generate-button" onClick={downloadReport}>
+                    DOWNLOAD FULL REPORT <ArrowUpRight size={15} />
+                  </button>
+                </div>
+              ) : (
+                <p className="empty">Select a flagged region to inspect its evidence package.</p>
+              )}
+            </div>
+          </section>
+
+          <footer>
+            <span>GEOSENTINEL AI / HACKFRONT INDIA 2026</span>
+            <span>Detection is an intelligence signal, not a legal determination.</span>
+          </footer>
+        </>
+      )}
     </main>
   );
 }
