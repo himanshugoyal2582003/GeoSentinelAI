@@ -49,6 +49,8 @@ timeline summaries, and downloadable case reports.
 
 ![GeoSentinel finding details](./docs/img/Screenshot%202026-11-02%20211632.png)
 
+![GeoSentinel live change map and flagged regions](./docs/img/Screenshot%202026-11-02%20211646.png)
+
 ![GeoSentinel scan workflow](./docs/img/Screenshot%202026-11-02%20211700.png)
 
 ## Neo4j Graph Integration
