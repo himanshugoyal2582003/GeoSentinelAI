@@ -122,3 +122,35 @@ def list_observations_for_case(session: Session, case_id: str) -> list[dict]:
         return [dict(record["finding"]) for record in result]
     except (ServiceUnavailable, TransientError) as exc:
         raise RuntimeError("Neo4j is temporarily unavailable. Please retry.") from exc
+
+
+def update_case(
+    session: Session,
+    case_id: str,
+    status: str | None = None,
+    review_status: str | None = None,
+    description: str | None = None,
+    updated_at: str | None = None,
+) -> dict | None:
+    """Update fields on an InvestigationCase node."""
+    query = """
+    MATCH (c:InvestigationCase {case_id: $case_id})
+    SET c.updated_at = $updated_at
+    SET c.status = coalesce($status, c.status)
+    SET c.review_status = coalesce($review_status, c.review_status)
+    SET c.description = coalesce($description, c.description)
+    RETURN c {.*} AS updated_case
+    """
+    try:
+        result = session.run(
+            query,
+            case_id=case_id,
+            status=status,
+            review_status=review_status,
+            description=description,
+            updated_at=updated_at,
+        )
+        record = result.single()
+        return dict(record["updated_case"]) if record else None
+    except (ServiceUnavailable, TransientError) as exc:
+        raise RuntimeError("Neo4j is temporarily unavailable. Please retry.") from exc

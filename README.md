@@ -111,6 +111,20 @@ it is skipped for RGB-only uploads. OSCD is a general land-cover change
 benchmark, not a validated illegal-quarry dataset. See the
 [labeling and training guide](./docs/labeling-and-training.md) for details.
 
+For a separate model with many mining examples, prepare the public Global ML ready
+mining footprint dataset and run `python train_mining_model.py` from `backend`.
+The new model learns mining footprint segmentation, not illegal activity or
+temporal expansion. Dataset preparation, attribution, and licensing are
+documented in [`dataset/public-global-mining/README.md`](dataset/public-global-mining/README.md).
+
+Training also supports the real public Sentinel-2 pair in
+`dataset/public-sentinel2-pune`. It creates weak labels from measured image
+difference tiles. This is a real-image workflow, but it is not a validated
+illegal-mining model; production training requires expert-labeled scene pairs.
+To add real labels, append rows to `dataset/public-sentinel2-pune/labels.csv`
+with `x,y,label` (`label` is `1` for confirmed quarry change and `0` for
+stable land), then retrain. The script uses those labels when present.
+
 Long-term monitoring now includes:
 
 - up to eight low-cloud Sentinel-2 scenes in one scan;

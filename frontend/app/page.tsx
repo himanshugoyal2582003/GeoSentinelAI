@@ -15,9 +15,10 @@ export default function HomePage() {
           <span className="brand-mark"><Crosshair size={19} /></span>
           <span className="landing-brand-copy"><strong>GeoSentinel AI</strong><small>Monitoring command center</small></span>
         </Link>
-        <nav className="landing-nav" aria-label="Main navigation">
+        <nav className="landing-nav" aria-label="Main navigation" style={{ display: "flex", alignItems: "center", gap: "14px" }}>
           <Link className="landing-nav-link" href="/pricing">Pricing</Link>
           <Link className="landing-nav-link" href="/dashboard">Open dashboard <ArrowUpRight size={15} /></Link>
+          <Link className="landing-nav-link" href="/login" style={{ border: "1px solid var(--line)", padding: "6px 12px" }}>Officer Login</Link>
         </nav>
       </header>
 

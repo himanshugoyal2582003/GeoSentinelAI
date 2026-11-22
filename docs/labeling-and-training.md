@@ -70,3 +70,23 @@ the system reliably detects illegal quarrying.
 Quarry monitoring still needs independently collected, expert-reviewed quarry
 labels and a separate evaluation set before making operational claims.
 
+## Public mine footprint training
+
+The repository also supports an independently trained mine footprint segmenter
+using the Global ML ready dataset for mining areas. It covers 1,210 sites, but
+its labels identify mining footprints; they do not establish illegal activity
+or temporal expansion. The dataset record is at
+<https://doi.org/10.5281/zenodo.14195737> and its labels are CC BY-SA 4.0.
+The archive contains masks and metadata, not Sentinel-2 pixels. Follow
+[`dataset/public-global-mining/README.md`](../dataset/public-global-mining/README.md)
+to prepare imagery and masks with the dataset authors' workflow, then run
+`python train_mining_model.py` from `backend`.
+
+This produces a separate `mine_footprint_cnn.pt` artifact. Its validation and
+test metrics use the source dataset's provided splits, and the API reports
+its mine-footprint likelihood separately from the change model score.
+
+For a stronger model, collect multiple dates and locations, label both changed
+and unchanged patches, preserve cloud/season diversity, and keep a separate
+expert-reviewed validation set.
+

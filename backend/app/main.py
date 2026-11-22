@@ -18,7 +18,7 @@ from uuid import uuid4
 import numpy as np
 import torch
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Header, HTTPException, Response, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Response, UploadFile
 from fastapi import Request as FastAPIRequest
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -28,12 +28,14 @@ from .api.findings import router as findings_router
 from .api.graph import router as graph_router
 
 # Import sub-routers
+from .api.auth import router as auth_router
 from .api.health import router as health_router
 from .api.investigations import router as investigations_router
 from .api.pdf_reports import router as pdf_reports_router
 from .api.scans import router as scans_router
 from .api.sites import router as sites_router
 from .change_model import load_model
+from .mining_model import load_mining_model
 from .db.neo4j import get_driver, neo4j_lifespan
 from .history import save_scan
 from .geometry import geometry_bbox, normalize_polygon_geometry
@@ -104,6 +106,7 @@ app.include_router(investigations_router)
 app.include_router(graph_router)
 app.include_router(sites_router)
 app.include_router(pdf_reports_router)
+app.include_router(auth_router)
 
 MEDIA_DIR = Path(__file__).resolve().parents[1] / "data" / "live"
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
@@ -120,18 +123,26 @@ _LAST_LIVE_SCAN_ATTEMPT: float | None = None
 
 MODEL_PATH = str(Path(__file__).resolve().parents[1] / "models" / "change_cnn.pt")
 CHANGE_MODEL = load_model(MODEL_PATH)
+MINING_MODEL_PATH = str(Path(__file__).resolve().parents[1] / "models" / "mine_footprint_cnn.pt")
+MINING_MODEL = load_mining_model(MINING_MODEL_PATH)
 TRAINING_STATE: dict[str, Any] = {"status": "idle", "message": "Training has not been started."}
 TRAINING_LOCK = threading.Lock()
+MINING_TRAINING_STATE: dict[str, Any] = {"status": "idle", "message": "Mining model training has not been started."}
+MINING_TRAINING_LOCK = threading.Lock()
 
 
 @app.get("/api/model")
 def model_status() -> dict[str, Any]:
     metrics_path = Path(MODEL_PATH).with_name("metrics.json")
     metrics = json.loads(metrics_path.read_text(encoding="utf-8")) if metrics_path.exists() else {}
+    mining_metrics_path = Path(MINING_MODEL_PATH).with_name("mine_footprint_metrics.json")
+    mining_metrics = json.loads(mining_metrics_path.read_text(encoding="utf-8")) if mining_metrics_path.exists() else {}
     return {
         "loaded": CHANGE_MODEL is not None,
         "inputChannels": CHANGE_MODEL.input_channels if CHANGE_MODEL is not None else None,
         "metrics": metrics,
+        "miningFootprintModel": {"loaded": MINING_MODEL is not None, "metrics": mining_metrics},
+    }
     }
 
 
@@ -178,6 +189,64 @@ def training_status() -> dict[str, Any]:
         return dict(TRAINING_STATE)
 
 
+def _run_mining_training() -> None:
+    global MINING_MODEL
+    try:
+        process = subprocess.run(
+            [sys.executable, "train_mining_model.py"],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        with MINING_TRAINING_LOCK:
+            if process.returncode == 0:
+                MINING_MODEL = load_mining_model(MINING_MODEL_PATH)
+                if MINING_MODEL is not None:
+                    MINING_TRAINING_STATE.update({
+                        "status": "completed",
+                        "message": "Mine footprint segmentation training completed and the model was reloaded.",
+                        "output": process.stdout[-2000:],
+                    })
+                else:
+                    MINING_TRAINING_STATE.update({
+                        "status": "failed",
+                        "message": "Training finished, but the new mine footprint model could not be loaded.",
+                        "output": process.stdout[-2000:],
+                    })
+            else:
+                MINING_TRAINING_STATE.update({
+                    "status": "failed",
+                    "message": "Mine footprint training failed. Check the prepared dataset and training output.",
+                    "output": (process.stdout + process.stderr)[-2000:],
+                })
+    except (OSError, ValueError) as exc:
+        with MINING_TRAINING_LOCK:
+            MINING_TRAINING_STATE.update({"status": "failed", "message": f"Could not start mine footprint training: {exc}"})
+
+
+@app.get("/api/train/mining")
+def mining_training_status() -> dict[str, Any]:
+    with MINING_TRAINING_LOCK:
+        return dict(MINING_TRAINING_STATE)
+
+
+@app.post("/api/train/mining")
+def train_mining_model() -> dict[str, Any]:
+    if os.getenv("TRAINING_ENABLED", "").lower() != "true":
+        raise HTTPException(status_code=403, detail="Training is disabled. Set TRAINING_ENABLED=true to enable it.")
+    with TRAINING_LOCK:
+        with MINING_TRAINING_LOCK:
+            if TRAINING_STATE["status"] == "running":
+                raise HTTPException(status_code=409, detail="The change CNN is already training.")
+            if MINING_TRAINING_STATE["status"] == "running":
+                return dict(MINING_TRAINING_STATE)
+            MINING_TRAINING_STATE.clear()
+            MINING_TRAINING_STATE.update({"status": "running", "message": "Mine footprint training is running."})
+    threading.Thread(target=_run_mining_training, daemon=True).start()
+    return dict(MINING_TRAINING_STATE)
+
+
 @app.post("/api/train")
 def train_model() -> dict[str, Any]:
     if os.getenv("TRAINING_ENABLED", "").lower() != "true":
@@ -192,10 +261,13 @@ def train_model() -> dict[str, Any]:
             ),
         )
     with TRAINING_LOCK:
-        if TRAINING_STATE["status"] == "running":
-            return dict(TRAINING_STATE)
-        TRAINING_STATE.clear()
-        TRAINING_STATE.update({"status": "running", "message": "OSCD CNN training is running."})
+        with MINING_TRAINING_LOCK:
+            if MINING_TRAINING_STATE["status"] == "running":
+                raise HTTPException(status_code=409, detail="The mine footprint model is already training.")
+            if TRAINING_STATE["status"] == "running":
+                return dict(TRAINING_STATE)
+            TRAINING_STATE.clear()
+            TRAINING_STATE.update({"status": "running", "message": "OSCD CNN training is running."})
     threading.Thread(target=_run_training, daemon=True).start()
     return dict(TRAINING_STATE)
 
@@ -241,6 +313,7 @@ def _analyse_pair(
     raster_grid: RasterGrid | None = None,
     alignment_shift: tuple[float, float] | None = None,
 ) -> dict[str, Any]:
+    recent_image_for_mining = new_image.copy()
     new_image = _normalize_season(new_image, old_image)
     if alignment_shift is None:
         aligned_image, shift = _align_image(old_image, new_image)
@@ -304,6 +377,23 @@ def _analyse_pair(
                         )[0]
                     )
                 confidence = round((confidence + model_score) / 2, 3)
+        mining_score = None
+        if MINING_MODEL is not None and width >= 32 and height >= 32:
+            mining_x = max(0, min(width - 32, x + component_width // 2 - 16))
+            mining_y = max(0, min(height - 32, y + component_height // 2 - 16))
+            mining_patch = recent_image_for_mining[
+                mining_y : mining_y + 32, mining_x : mining_x + 32
+            ].transpose(2, 0, 1) / 255
+            with torch.no_grad():
+                pixel_probabilities = torch.sigmoid(
+                    MINING_MODEL(torch.from_numpy(mining_patch.astype(np.float32))[None])
+                )[0].numpy()
+            changed_pixels = mask[mining_y : mining_y + 32, mining_x : mining_x + 32]
+            mining_score = (
+                float(pixel_probabilities[changed_pixels].mean())
+                if changed_pixels.any()
+                else float(pixel_probabilities.mean())
+            )
         if spectral_change is None:
             change_type = "Spectral surface change"
         else:
@@ -339,6 +429,7 @@ def _analyse_pair(
                 "lastObserved": recent_date,
                 "status": "Needs review",
                 "modelScore": model_score,
+                "miningFootprintProbability": round(mining_score, 3) if mining_score is not None else None,
             }
         )
     total_area = sum(item["areaSqm"] for item in findings)
@@ -815,9 +906,9 @@ def scan_site(
 async def detect(
     historical: UploadFile = File(...),
     recent: UploadFile = File(...),
-    latitude: float = 18.5204,
-    longitude: float = 73.8567,
-    pixel_size_m: float = 10,
+    latitude: float = Form(18.5204),
+    longitude: float = Form(73.8567),
+    pixel_size_m: float = Form(10.0),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> dict[str, Any]:
     # 1. Geographic input validation

@@ -25,6 +25,12 @@ class AssociateObservationRequest(BaseModel):
     detection_id: str = Field(..., min_length=1)
 
 
+class UpdateCaseRequest(BaseModel):
+    status: str | None = None
+    review_status: str | None = None
+    description: str | None = None
+
+
 @router.get("")
 def list_investigations(
     limit: int = Query(default=50, ge=1, le=200),
@@ -72,6 +78,29 @@ def get_investigation(case_id: str) -> dict[str, Any]:
     except Exception as exc:
         logger.error("Failed to get case %s: %s", case_id, exc)
         raise HTTPException(status_code=500, detail="Database query failed.") from exc
+
+
+@router.put("/{case_id}")
+@router.patch("/{case_id}")
+def update_investigation(case_id: str, req: UpdateCaseRequest) -> dict[str, Any]:
+    """Update status, review_status, or description for a case."""
+    try:
+        driver = get_driver()
+        updated = investigation_service.update_investigation(
+            driver,
+            case_id=case_id,
+            status=req.status,
+            review_status=req.review_status,
+            description=req.description,
+        )
+        if not updated:
+            raise HTTPException(status_code=404, detail=f"Case {case_id} not found.")
+        return updated
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Failed to update case %s: %s", case_id, exc)
+        raise HTTPException(status_code=500, detail="Database update failed.") from exc
 
 
 @router.post("/{case_id}/observations", status_code=200)
