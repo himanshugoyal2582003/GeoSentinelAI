@@ -15,6 +15,7 @@ backend/**/*.pyc
 
 backend/data/live/*.png
 backend/data/live/last-result.json
+backend/data/evidence/
 backend/data/oscd/
 backend/data/public_mining/
 dataset/public-global-mining/mining_area_data.zip

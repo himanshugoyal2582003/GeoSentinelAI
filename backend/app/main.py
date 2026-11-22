@@ -143,7 +143,6 @@ def model_status() -> dict[str, Any]:
         "metrics": metrics,
         "miningFootprintModel": {"loaded": MINING_MODEL is not None, "metrics": mining_metrics},
     }
-    }
 
 
 def _run_training() -> None:
@@ -904,13 +903,32 @@ def scan_site(
 
 @app.post("/api/detect")
 async def detect(
+    request: FastAPIRequest,
     historical: UploadFile = File(...),
     recent: UploadFile = File(...),
-    latitude: float = Form(18.5204),
-    longitude: float = Form(73.8567),
-    pixel_size_m: float = Form(10.0),
+    latitude: float | None = None,
+    longitude: float | None = None,
+    pixel_size_m: float | None = None,
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> dict[str, Any]:
+    # Support both Query params and Form body data
+    form = await request.form()
+    if latitude is None:
+        try:
+            latitude = float(form["latitude"]) if "latitude" in form else 18.5204
+        except (ValueError, TypeError):
+            latitude = 18.5204
+    if longitude is None:
+        try:
+            longitude = float(form["longitude"]) if "longitude" in form else 73.8567
+        except (ValueError, TypeError):
+            longitude = 73.8567
+    if pixel_size_m is None:
+        try:
+            pixel_size_m = float(form["pixel_size_m"]) if "pixel_size_m" in form else 10.0
+        except (ValueError, TypeError):
+            pixel_size_m = 10.0
+
     # 1. Geographic input validation
     validate_coordinates(latitude, longitude)
     validate_pixel_size(pixel_size_m)
