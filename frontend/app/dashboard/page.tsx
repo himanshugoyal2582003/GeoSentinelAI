@@ -99,9 +99,6 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [liveScanning, setLiveScanning] = useState(false);
-  const [training, setTraining] = useState(false);
-  const [trainingMessage, setTrainingMessage] = useState("");
-  const [trainingError, setTrainingError] = useState("");
   const [reportTemplate, setReportTemplate] = useState<"quarry-compliance" | "landowner-evidence">("quarry-compliance");
   const [reportBrandName, setReportBrandName] = useState("");
   const [generatingReport, setGeneratingReport] = useState(false);
@@ -353,41 +350,6 @@ export default function Home() {
     }
   }
 
-  async function trainCnn() {
-    setTraining(true);
-    setError("");
-    setTrainingError("");
-    setTrainingMessage("Starting OSCD CNN training...");
-    try {
-      const response = await fetch(`${API}/api/train`, { method: "POST" });
-      if (!response.ok) {
-        throw new Error(await parseApiError(response, "OSCD training could not start."));
-      }
-      let state = (await response.json()) as { status: string; message: string; output?: string };
-      setTrainingMessage(state.message);
-      let attempts = 0;
-      while (state.status === "running" && attempts < 60) {
-        attempts++;
-        await new Promise((resolve) => window.setTimeout(resolve, 2000));
-        const statusResponse = await fetch(`${API}/api/train`);
-        if (!statusResponse.ok) {
-          throw new Error(await parseApiError(statusResponse, "Could not read OSCD training status"));
-        }
-        state = (await statusResponse.json()) as { status: string; message: string; output?: string };
-        setTrainingMessage(state.message);
-      }
-      if (state.status === "failed") throw new Error([state.message, state.output].filter(Boolean).join("\n"));
-      if (state.status === "running") {
-        setTrainingMessage("Training continues in the backend. Click TRAIN CNN again later to check its status.");
-      }
-    } catch (reason) {
-      setTrainingMessage("");
-      setTrainingError(reason instanceof Error ? reason.message : "OSCD training failed");
-    } finally {
-      setTraining(false);
-    }
-  }
-
   async function trainMineModel() {
     setMineTraining(true);
     setMineTrainingMessage("Starting public mine footprint training...");
@@ -470,10 +432,7 @@ export default function Home() {
           <button className="live-button" onClick={runLiveScan} disabled={waitingForDashboard || liveScanning}>
             <Waves size={15} /> {waitingForDashboard || liveScanning ? "SCANNING..." : "LIVE SATELLITE SCAN"}
           </button>
-          <button className="live-button" onClick={trainCnn} disabled={training || mineTraining || waitingForDashboard}>
-            <BrainCircuit size={15} /> {training ? "TRAINING..." : "TRAIN DEMO CNN"}
-          </button>
-          <button className="live-button" onClick={trainMineModel} disabled={training || mineTraining || waitingForDashboard}>
+          <button className="live-button" onClick={trainMineModel} disabled={mineTraining || waitingForDashboard}>
             <BrainCircuit size={15} /> {mineTraining ? "TRAINING MINE MODEL..." : "TRAIN MINE MODEL"}
           </button>
           <label className={`upload-button ${uploading || waitingForDashboard ? "disabled" : ""}`}>
@@ -577,24 +536,9 @@ export default function Home() {
         </div>
       )}
 
-      {(trainingMessage || mineTrainingMessage) && (
+      {mineTrainingMessage && (
         <div className="cache-note">
-          <BrainCircuit size={16} /> {mineTrainingMessage || trainingMessage}
-        </div>
-      )}
-      {trainingError && (
-        <div className="training-error" role="alert">
-          <AlertTriangle size={17} />
-          <span>{trainingError}</span>
-          {trainingError.includes("Prepared OSCD patches are missing") && (
-            <a
-              href="https://ieee-dataport.org/open-access/oscd-onera-satellite-change-detection"
-              target="_blank"
-              rel="noreferrer"
-            >
-              GET OSCD DATASET
-            </a>
-          )}
+          <BrainCircuit size={16} /> {mineTrainingMessage}
         </div>
       )}
 
