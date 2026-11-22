@@ -81,10 +81,49 @@ async function parseApiError(response: Response, defaultMessage: string): Promis
   }
 }
 
-function resolveImageUrl(path: string | undefined): string {
-  if (!path) return "";
-  if (path.startsWith("http://") || path.startsWith("https://") || path.startsWith("data:")) return path;
-  return apiUrl(path);
+function ApiImage({ src, alt }: { src: string | undefined; alt: string }) {
+  const [imageUrl, setImageUrl] = useState("");
+
+  useEffect(() => {
+    if (!src) {
+      setImageUrl("");
+      return;
+    }
+    if (src.startsWith("data:")) {
+      setImageUrl(src);
+      return;
+    }
+    if (/^https?:\\/\\//i.test(src)) {
+      setImageUrl(src);
+      return;
+    }
+
+    let disposed = false;
+    let objectUrl: string | undefined;
+    apiFetch(src)
+      .then((response) => {
+        if (!response.ok) throw new Error(`Image request failed (${response.status}).`);
+        return response.blob();
+      })
+      .then((blob) => {
+        objectUrl = URL.createObjectURL(blob);
+        if (disposed) {
+          URL.revokeObjectURL(objectUrl);
+          return;
+        }
+        setImageUrl(objectUrl);
+      })
+      .catch(() => {
+        if (!disposed) setImageUrl("");
+      });
+
+    return () => {
+      disposed = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [src]);
+
+  return <img src={imageUrl} alt={alt} />;
 }
 
 function getSatelliteUrl(finding: Finding): string {
@@ -656,12 +695,12 @@ export default function Home() {
               </div>
               <div className="satellite-images">
                 <figure>
-                  <img src={resolveImageUrl(data.source.historicalImage)} alt="Historical Sentinel-2 scene" />
+                  <ApiImage src={data.source.historicalImage} alt="Historical Sentinel-2 scene" />
                   <figcaption>HISTORICAL / {data.historicalDate}</figcaption>
                 </figure>
                 <div className="compare-arrow">â†’</div>
                 <figure>
-                  <img src={resolveImageUrl(data.source.recentImage)} alt="Recent Sentinel-2 scene" />
+                  <ApiImage src={data.source.recentImage} alt="Recent Sentinel-2 scene" />
                   <figcaption>RECENT / {data.recentDate}</figcaption>
                 </figure>
               </div>
