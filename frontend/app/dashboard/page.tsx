@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ArrowUpRight, CalendarDays, Crosshair, FileText, MapPin, Upload, Waves, BrainCircuit } from "lucide-react";
 import type { Map as LeafletMap } from "leaflet";
 import "leaflet/dist/leaflet.css";
+import { getStoredUser, clearAuthSession, recordActivity, isSessionIdle, type AuthUser } from "../lib/auth";
 
 const LIVE_SCAN_INTERVAL_MS = 10 * 60 * 1000;
 
@@ -22,6 +23,7 @@ type Finding = {
   regionBbox?: [number, number, number, number];
   detectionErrorSqm?: number;
   modelScore?: number;
+  miningFootprintProbability?: number;
   googleMapsUrl?: string;
   googleSatelliteUrl?: string;
 };
@@ -82,9 +84,17 @@ export default function Home() {
   const [liveScanning, setLiveScanning] = useState(false);
   const [training, setTraining] = useState(false);
   const [trainingMessage, setTrainingMessage] = useState("");
+  const [mineTraining, setMineTraining] = useState(false);
+  const [mineTrainingMessage, setMineTrainingMessage] = useState("");
   const [nextScanAt, setNextScanAt] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const waitingForDashboard = loading || (liveScanning && !data);
+
+  function handleLogout() {
+    clearAuthSession();
+    setAuthUser(null);
+  }
 
   function applyLiveResult(value: Dataset) {
     setData(value);
@@ -114,6 +124,29 @@ export default function Home() {
     }, LIVE_SCAN_INTERVAL_MS);
     return () => window.clearInterval(timer);
   }, [liveScanning]);
+
+  useEffect(() => {
+    setAuthUser(getStoredUser());
+    const onActivity = () => recordActivity();
+    window.addEventListener("mousemove", onActivity);
+    window.addEventListener("keydown", onActivity);
+    window.addEventListener("click", onActivity);
+
+    const idleTimer = window.setInterval(() => {
+      if (getStoredUser() && isSessionIdle()) {
+        clearAuthSession();
+        setAuthUser(null);
+        setError("Your officer session expired due to 15 minutes of idle inactivity. Please log in again.");
+      }
+    }, 10000);
+
+    return () => {
+      window.removeEventListener("mousemove", onActivity);
+      window.removeEventListener("keydown", onActivity);
+      window.removeEventListener("click", onActivity);
+      window.clearInterval(idleTimer);
+    };
+  }, []);
 
   const maxArea = useMemo(() => {
     const areas = data?.timeline?.map((item) => item.areaSqm) || [];
@@ -174,7 +207,7 @@ export default function Home() {
       if (!response.ok) {
         throw new Error(await parseApiError(response, "CNN training could not start. Enable TRAINING_ENABLED on the backend."));
       }
-      let state = (await response.json()) as { status: string; message: string };
+      let state = (await response.json()) as { status: string; message: string; output?: string };
       setTrainingMessage(state.message);
       let attempts = 0;
       while (state.status === "running" && attempts < 60) {
@@ -184,14 +217,44 @@ export default function Home() {
         if (!statusResponse.ok) {
           throw new Error(await parseApiError(statusResponse, "Could not read CNN training status"));
         }
-        state = (await statusResponse.json()) as { status: string; message: string };
+        state = (await statusResponse.json()) as { status: string; message: string; output?: string };
         setTrainingMessage(state.message);
       }
-      if (state.status === "failed") throw new Error(state.message);
+      if (state.status === "failed") throw new Error([state.message, state.output].filter(Boolean).join("\n"));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "CNN training failed");
     } finally {
       setTraining(false);
+    }
+  }
+
+  async function trainMineModel() {
+    setMineTraining(true);
+    setMineTrainingMessage("Starting public mine footprint training...");
+    try {
+      const response = await fetch(`${API}/api/train/mining`, { method: "POST" });
+      if (!response.ok) {
+        throw new Error(await parseApiError(response, "Mine footprint training could not start."));
+      }
+      let state = (await response.json()) as { status: string; message: string; output?: string };
+      setMineTrainingMessage(state.message);
+      let attempts = 0;
+      while (state.status === "running" && attempts < 600) {
+        attempts++;
+        await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        const statusResponse = await fetch(`${API}/api/train/mining`);
+        if (!statusResponse.ok) {
+          throw new Error(await parseApiError(statusResponse, "Could not read mine footprint training status"));
+        }
+        state = (await statusResponse.json()) as { status: string; message: string; output?: string };
+        setMineTrainingMessage(state.message);
+      }
+      if (state.status === "failed") throw new Error([state.message, state.output].filter(Boolean).join("\n"));
+      if (state.status === "running") setMineTrainingMessage("Training is still running. Check the backend status for the result.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Mine footprint training failed");
+    } finally {
+      setMineTraining(false);
     }
   }
 
@@ -231,13 +294,64 @@ export default function Home() {
           <button className="live-button" onClick={runLiveScan} disabled={waitingForDashboard || liveScanning}>
             <Waves size={15} /> {waitingForDashboard || liveScanning ? "SCANNING..." : "LIVE SATELLITE SCAN"}
           </button>
-          <button className="live-button" onClick={trainCnn} disabled={training || waitingForDashboard}>
-            <BrainCircuit size={15} /> {training ? "TRAINING..." : "TRAIN CNN"}
+          <button className="live-button" onClick={trainCnn} disabled={training || mineTraining || waitingForDashboard}>
+            <BrainCircuit size={15} /> {training ? "TRAINING..." : "TRAIN DEMO CNN"}
+          </button>
+          <button className="live-button" onClick={trainMineModel} disabled={training || mineTraining || waitingForDashboard}>
+            <BrainCircuit size={15} /> {mineTraining ? "TRAINING MINE MODEL..." : "TRAIN MINE MODEL"}
           </button>
           <label className={`upload-button ${uploading || waitingForDashboard ? "disabled" : ""}`}>
             <Upload size={15} /> {uploading ? "PROCESSING..." : "UPLOAD PAIR"}
             <input type="file" accept="image/*" multiple onChange={handleUpload} disabled={uploading || waitingForDashboard} />
           </label>
+          {authUser ? (
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "8px",
+                background: "#f0fdf4",
+                border: "1px solid #bbf7d0",
+                padding: "6px 12px",
+                fontSize: "11px",
+                color: "#166534",
+                fontFamily: "'DM Mono', monospace",
+              }}
+            >
+              <span>OFFICER: <strong>{authUser.username}</strong></span>
+              <button
+                type="button"
+                onClick={handleLogout}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "#991b1b",
+                  textDecoration: "underline",
+                  cursor: "pointer",
+                  padding: 0,
+                  fontSize: "10px",
+                }}
+              >
+                LOGOUT
+              </button>
+            </div>
+          ) : (
+            <a
+              href="/login"
+              style={{
+                border: "1px solid var(--line)",
+                background: "#fff",
+                color: "var(--dark)",
+                padding: "8px 12px",
+                fontSize: "11px",
+                fontFamily: "'DM Mono', monospace",
+                textDecoration: "none",
+                letterSpacing: ".06em",
+              }}
+            >
+              OFFICER LOGIN
+            </a>
+          )}
         </div>
       </header>
 
@@ -287,9 +401,9 @@ export default function Home() {
         </div>
       )}
 
-      {trainingMessage && (
+      {(trainingMessage || mineTrainingMessage) && (
         <div className="cache-note">
-          <BrainCircuit size={16} /> {trainingMessage}
+          <BrainCircuit size={16} /> {mineTrainingMessage || trainingMessage}
         </div>
       )}
 
@@ -508,7 +622,10 @@ export default function Home() {
                       REGION BBOX <b>{selected.regionBbox?.join(", ") || "Unavailable"}</b>
                     </span>
                     <span>
-                      MODEL SCORE <b>{selected.modelScore ? `${Math.round(selected.modelScore * 100)}%` : "Unavailable"}</b>
+                      CHANGE MODEL SCORE <b>{selected.modelScore != null ? `${Math.round(selected.modelScore * 100)}%` : "Unavailable"}</b>
+                    </span>
+                    <span>
+                      MINE FOOTPRINT LIKELIHOOD <b>{selected.miningFootprintProbability != null ? `${Math.round(selected.miningFootprintProbability * 100)}%` : "Not trained"}</b>
                     </span>
                   </div>
                   <div className="case-links">

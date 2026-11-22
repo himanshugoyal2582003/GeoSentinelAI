@@ -19,7 +19,8 @@ Returns service and model availability.
 ## `GET /api/model`
 
 Returns whether `change_cnn.pt` loaded and the contents of
-`backend/models/metrics.json`.
+`backend/models/metrics.json`. The response also includes `miningFootprintModel`
+with the loading status and metrics for `mine_footprint_cnn.pt`, when trained.
 
 ## `GET /api/scans`
 
@@ -122,6 +123,19 @@ Returns the current training state:
 When complete, the backend reloads `change_cnn.pt`. Training is disabled by
 default on Render and should only be enabled temporarily for an authorized
 operator; this endpoint has no user authentication layer.
+
+## `POST /api/train/mining`
+
+Starts training the separate mine-footprint segmentation model from the
+prepared public dataset under `backend/data/public_mining`. The backend must
+have `TRAINING_ENABLED=true`; the dataset's image and mask preparation steps
+are documented in `dataset/public-global-mining/README.md`.
+
+## `GET /api/train/mining`
+
+Returns the mining model training state. On completion the API reloads
+`mine_footprint_cnn.pt`. This model estimates mining footprint pixels and does
+not classify illegality or temporal expansion.
 
 ## CORS
 
@@ -268,3 +282,44 @@ Request body:
   "detection_id": "det-scan-001-GS-LIVE-001"
 }
 ```
+
+## `PUT /api/investigations/{case_id}` / `PATCH /api/investigations/{case_id}`
+
+Updates status (`open`, `investigating`, `closed`), `review_status`, or `description` for a case.
+
+## `POST /api/auth/login`
+
+Authenticates credentials and returns a signed Bearer token with session idle tracking.
+
+Request body:
+```json
+{
+  "username": "admin",
+  "password": "geosentinel-admin"
+}
+```
+
+Response:
+```json
+{
+  "access_token": "geo_...",
+  "token_type": "Bearer",
+  "username": "admin",
+  "idle_timeout_seconds": 900,
+  "expires_in": 86400
+}
+```
+
+## `GET /api/auth/me`
+
+Validates the Bearer token, checks idle session inactivity, and refreshes the activity timestamp.
+
+Header: `Authorization: Bearer <access_token>`
+
+If the user is inactive for longer than `idle_timeout_seconds` (15 minutes), the server responds with:
+`401 Unauthorized: Session expired due to idle inactivity. Please log in again.`
+
+## `POST /api/auth/logout`
+
+Revokes the active Bearer token immediately.
+

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import socket
+from pathlib import Path
 from urllib.parse import urlparse
 from contextlib import asynccontextmanager, contextmanager
 from typing import Any, Generator
@@ -31,12 +32,16 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+_BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+_ENV_FILE = _BACKEND_DIR / ".env"
+
+
 class DatabaseSettings(BaseSettings):
     """Neo4j connection settings — read from environment variables."""
 
     model_config = SettingsConfigDict(
         env_prefix="NEO4J_",
-        env_file=".env",
+        env_file=(_ENV_FILE, ".env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",

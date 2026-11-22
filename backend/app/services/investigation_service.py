@@ -137,3 +137,27 @@ def add_observation_to_case(
             }
     except (ServiceUnavailable, TransientError) as exc:
         raise RuntimeError("Neo4j is temporarily unavailable.") from exc
+
+
+def update_investigation(
+    driver: Any,
+    case_id: str,
+    status: str | None = None,
+    review_status: str | None = None,
+    description: str | None = None,
+) -> dict[str, Any] | None:
+    """Update case status, review_status, or description."""
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        with driver.session() as session:
+            from app.repositories import case_repository
+            return case_repository.update_case(
+                session,
+                case_id=case_id,
+                status=status,
+                review_status=review_status,
+                description=description,
+                updated_at=now,
+            )
+    except (ServiceUnavailable, TransientError) as exc:
+        raise RuntimeError("Neo4j is temporarily unavailable.") from exc

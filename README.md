@@ -71,6 +71,13 @@ evaluates it, and writes `backend/models/change_cnn.pt` plus
 its status at `GET /api/model`. If the model artifact is absent, image
 differencing remains available as an explicit fallback.
 
+That demo change model is trained from one image pair with weak labels. For a
+separate model with many mining examples, prepare the public Global ML ready
+mining footprint dataset and run `python train_mining_model.py` from `backend`.
+The new model learns mining footprint segmentation, not illegal activity or
+temporal expansion. Dataset preparation, attribution, and licensing are
+documented in [`dataset/public-global-mining/README.md`](dataset/public-global-mining/README.md).
+
 Training now uses the real public Sentinel-2 pair in
 `dataset/public-sentinel2-pune`. It creates weak labels from measured image
 difference tiles. This is a real-image workflow, but it is not a validated

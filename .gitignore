@@ -15,5 +15,11 @@ backend/**/*.pyc
 
 backend/data/live/*.png
 backend/data/live/last-result.json
+backend/data/public_mining/
+dataset/public-global-mining/mining_area_data.zip
+dataset/public-global-mining/mining_area_data.gpkg
 
 frontend/out/
+frontend/.worktrees/
+**/__pycache__/
+

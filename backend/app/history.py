@@ -71,3 +71,9 @@ def read_scans(limit: int = 50) -> list[dict[str, str]]:
     with SCAN_FILE.open(newline="", encoding="utf-8") as handle:
         return list(csv.DictReader(handle))[-limit:][::-1]
 
+
+def read_findings(limit: int = 50) -> list[dict[str, str]]:
+    _ensure(FINDING_FILE, FINDING_FIELDS)
+    with FINDING_FILE.open(newline="", encoding="utf-8") as handle:
+        return list(csv.DictReader(handle))[-limit:][::-1]
+
