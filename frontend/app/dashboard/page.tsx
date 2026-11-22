@@ -5,6 +5,7 @@ import { AlertTriangle, ArrowUpRight, CalendarDays, Crosshair, FileText, MapPin,
 import type { Map as LeafletMap } from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { getStoredUser, clearAuthSession, recordActivity, isSessionIdle, type AuthUser } from "../lib/auth";
+import { apiFetch, apiUrl } from "../lib/api";
 
 const LIVE_SCAN_INTERVAL_MS = 30 * 60 * 1000;
 
@@ -71,8 +72,6 @@ type Dataset = {
   regionId?: string;
 };
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
 async function parseApiError(response: Response, defaultMessage: string): Promise<string> {
   try {
     const data = await response.json();
@@ -85,7 +84,7 @@ async function parseApiError(response: Response, defaultMessage: string): Promis
 function resolveImageUrl(path: string | undefined): string {
   if (!path) return "";
   if (path.startsWith("http://") || path.startsWith("https://") || path.startsWith("data:")) return path;
-  return `${API}${path.startsWith("/") ? "" : "/"}${path}`;
+  return apiUrl(path);
 }
 
 function getSatelliteUrl(finding: Finding): string {
@@ -134,7 +133,7 @@ export default function Home() {
   }
 
   useEffect(() => {
-    fetch(`${API}/api/live-detect`)
+    apiFetch("/api/live-detect")
       .then((response) => {
         if (!response.ok) throw new Error("Live satellite feed unavailable.");
         return response.json();
@@ -154,7 +153,7 @@ export default function Home() {
     let active = true;
     setSiteLoading(true);
     setSiteError("");
-    fetch(`${API}/api/sites`)
+    apiFetch("/api/sites")
       .then(async (response) => {
         if (!response.ok) throw new Error(await parseApiError(response, "Could not load monitoring sites."));
         return response.json() as Promise<{ sites: MonitoringSite[] }>;
@@ -166,7 +165,7 @@ export default function Home() {
         if (active) {
           setSiteError(
             reason instanceof TypeError
-              ? `Cannot reach the API at ${API}. Check that the backend is running and CORS allows ${window.location.origin}.`
+              ? `Cannot reach the API at ${apiUrl("")}. Check that the backend is running and CORS allows ${window.location.origin}.`
               : reason instanceof Error
                 ? reason.message
                 : "Could not load monitoring sites.",
@@ -232,7 +231,7 @@ export default function Home() {
     setUploading(true);
     setError("");
     try {
-      const response = await fetch(`${API}/api/detect`, { method: "POST", body });
+      const response = await apiFetch("/api/detect", { method: "POST", body });
       if (!response.ok) {
         throw new Error(await parseApiError(response, "Detection failed"));
       }
@@ -257,7 +256,7 @@ export default function Home() {
     setSiteBusy(true);
     setSiteError("");
     try {
-      const response = await fetch(`${API}/api/sites/import`, { method: "POST", body: form });
+      const response = await apiFetch("/api/sites/import", { method: "POST", body: form });
       if (!response.ok) throw new Error(await parseApiError(response, "Site import failed."));
       const site = (await response.json()) as MonitoringSite;
       setSites((current) => [...current, site].sort((a, b) => a.name.localeCompare(b.name)));
@@ -279,7 +278,7 @@ export default function Home() {
     setSiteBusy(true);
     setSiteError("");
     try {
-      const response = await fetch(`${API}/api/sites`, {
+      const response = await apiFetch("/api/sites", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: siteName, geometry: siteGeometry }),
@@ -301,7 +300,7 @@ export default function Home() {
     setSiteBusy(true);
     setError("");
     try {
-      const response = await fetch(`${API}/api/sites/${encodeURIComponent(siteId)}/scan`, { method: "POST" });
+      const response = await apiFetch(`/api/sites/${encodeURIComponent(siteId)}/scan`, { method: "POST" });
       if (!response.ok) throw new Error(await parseApiError(response, "Monitoring-site scan failed."));
       applyLiveResult((await response.json()) as Dataset);
     } catch (reason) {
@@ -316,7 +315,7 @@ export default function Home() {
     setSiteBusy(true);
     setSiteError("");
     try {
-      const response = await fetch(`${API}/api/sites/${encodeURIComponent(siteId)}`, { method: "DELETE" });
+      const response = await apiFetch(`/api/sites/${encodeURIComponent(siteId)}`, { method: "DELETE" });
       if (!response.ok) throw new Error(await parseApiError(response, "Could not remove monitoring site."));
       setSites((current) => current.filter((site) => site.siteId !== siteId));
     } catch (reason) {
@@ -336,7 +335,7 @@ export default function Home() {
     setLiveScanning(true);
     setError("");
     try {
-      const response = await fetch(`${API}/api/live-detect`);
+      const response = await apiFetch("/api/live-detect");
       if (!response.ok) {
         throw new Error(await parseApiError(response, "Live scan failed"));
       }
@@ -354,7 +353,7 @@ export default function Home() {
     setMineTraining(true);
     setMineTrainingMessage("Starting public mine footprint training...");
     try {
-      const response = await fetch(`${API}/api/train/mining`, { method: "POST" });
+      const response = await apiFetch("/api/train/mining", { method: "POST" });
       if (!response.ok) {
         throw new Error(await parseApiError(response, "Mine footprint training could not start."));
       }
@@ -364,7 +363,7 @@ export default function Home() {
       while (state.status === "running" && attempts < 600) {
         attempts++;
         await new Promise((resolve) => window.setTimeout(resolve, 2000));
-        const statusResponse = await fetch(`${API}/api/train/mining`);
+        const statusResponse = await apiFetch("/api/train/mining");
         if (!statusResponse.ok) {
           throw new Error(await parseApiError(statusResponse, "Could not read mine footprint training status"));
         }
@@ -395,8 +394,8 @@ export default function Home() {
         brand_name: reportBrandName.trim() || "GeoSentinel AI",
         finding_id: selected.id,
       });
-      const response = await fetch(
-        `${API}/api/scans/${encodeURIComponent(data.scanId)}/report.pdf?${query.toString()}`,
+      const response = await apiFetch(
+        `/api/scans/${encodeURIComponent(data.scanId)}/report.pdf?${query.toString()}`,
       );
       if (!response.ok) {
         throw new Error(await parseApiError(response, "Could not generate the PDF report"));
@@ -506,7 +505,7 @@ export default function Home() {
           <strong>
             {data ? (
               <>
-                {data.historicalDate} <b>→</b> {data.recentDate}
+                {data.historicalDate} <b>â†’</b> {data.recentDate}
               </>
             ) : waitingForDashboard ? (
               "Awaiting live scan"
@@ -649,7 +648,7 @@ export default function Home() {
                   </span>
                   <h2>Satellite comparison</h2>
                   <p>
-                    {data.source.provider} · {data.source.sceneCount || 0} scenes · approximately 5-day Sentinel-2 revisit · BBOX{" "}
+                    {data.source.provider} Â· {data.source.sceneCount || 0} scenes Â· approximately 5-day Sentinel-2 revisit Â· BBOX{" "}
                     {data.source.bbox.join(", ")}
                   </p>
                 </div>
@@ -660,7 +659,7 @@ export default function Home() {
                   <img src={resolveImageUrl(data.source.historicalImage)} alt="Historical Sentinel-2 scene" />
                   <figcaption>HISTORICAL / {data.historicalDate}</figcaption>
                 </figure>
-                <div className="compare-arrow">→</div>
+                <div className="compare-arrow">â†’</div>
                 <figure>
                   <img src={resolveImageUrl(data.source.recentImage)} alt="Recent Sentinel-2 scene" />
                   <figcaption>RECENT / {data.recentDate}</figcaption>
@@ -674,7 +673,7 @@ export default function Home() {
             <Kpi
               label="CHANGED AREA"
               value={`${data?.summary.changedAreaHa ?? 0} ha`}
-              detail={`${(data?.summary.changedAreaSqm ?? 0).toLocaleString()} m² mapped`}
+              detail={`${(data?.summary.changedAreaSqm ?? 0).toLocaleString()} mÂ² mapped`}
               icon={<ArrowUpRight />}
             />
             <Kpi
@@ -747,7 +746,7 @@ export default function Home() {
                     <span className="finding-main">
                       <strong>{finding.areaName || finding.label}</strong>
                       <small>
-                        {finding.changeType} · {finding.coordinates.join(", ")}
+                        {finding.changeType} Â· {finding.coordinates.join(", ")}
                       </small>
                     </span>
                     <span className="finding-area">{(finding.areaSqm / 10000).toFixed(2)} ha</span>
@@ -765,7 +764,7 @@ export default function Home() {
                   <span className="eyebrow">TEMPORAL ANALYSIS</span>
                   <h2>Expansion trajectory</h2>
                 </div>
-                <span className="unit">AREA / M²</span>
+                <span className="unit">AREA / MÂ²</span>
               </div>
               <p className="timeline-note">{data?.timelineNote || "Historical scene baseline compared with the recent scene."}</p>
               <div className="trajectory-chart">
@@ -794,7 +793,7 @@ export default function Home() {
                     <strong>
                       {String(index + 1).padStart(2, "0")} {data?.findings[index]?.areaName || item.label}
                     </strong>
-                    <b>{item.areaSqm.toLocaleString()} m²</b>
+                    <b>{item.areaSqm.toLocaleString()} mÂ²</b>
                   </button>
                 ))}
               </div>
@@ -829,10 +828,10 @@ export default function Home() {
                   </div>
                   <div className="evidence-grid">
                     <span>
-                      FLAGGED AREA <b>{selected.areaSqm.toLocaleString()} m²</b>
+                      FLAGGED AREA <b>{selected.areaSqm.toLocaleString()} mÂ²</b>
                     </span>
                     <span>
-                      EST. ERROR <b>±{(selected.detectionErrorSqm || 0).toLocaleString()} m²</b>
+                      EST. ERROR <b>Â±{(selected.detectionErrorSqm || 0).toLocaleString()} mÂ²</b>
                     </span>
                     <span>
                       REGION BBOX <b>{selected.regionBbox?.join(", ") || "Unavailable"}</b>
@@ -1090,7 +1089,7 @@ function LiveMap({
       <div ref={containerRef} className="real-map" aria-label="OpenStreetMap showing flagged areas" />
       {drawMode && (
         <div className="draw-toolbar" role="group" aria-label="Polygon drawing controls">
-          <span>CLICK MAP TO ADD POINTS · {drawPointCount} POINTS</span>
+          <span>CLICK MAP TO ADD POINTS Â· {drawPointCount} POINTS</span>
           {drawMessage && <small role="status">{drawMessage}</small>}
           <button onClick={finishDrawing}>FINISH POLYGON</button>
           <button onClick={cancelDrawing}>CANCEL</button>
